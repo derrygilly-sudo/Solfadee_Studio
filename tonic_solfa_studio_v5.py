@@ -967,21 +967,37 @@ class ConversionEngine:
                             syl=n.solfa(score.key_sig)
                             # Underline for half/whole
                             ul=n.duration_underscores()
-                            # Dot above for eighth
+                            # Duration visual markers
                             c.setFont(font_base + "-Bold", SOLFA_FONT_SIZE)
                             c.setFillColorRGB(0.08,0.06,0.02)
                             c.drawString(nx,ny,syl)
                             sw=c.stringWidth(syl, font_base + "-Bold", SOLFA_FONT_SIZE)
-                            if ul=='_':
-                                c.setLineWidth(0.6)
-                                c.line(nx,ny-1.5,nx+sw,ny-1.5)
-                            elif ul=='=':
+                            if ul.startswith(':-:-:-'):
                                 c.setLineWidth(0.6)
                                 c.line(nx,ny-1.5,nx+sw,ny-1.5)
                                 c.line(nx,ny-3,nx+sw,ny-3)
+                            elif ul.startswith(':-:-'):
+                                c.setLineWidth(0.6)
+                                c.line(nx,ny-1.5,nx+sw,ny-1.5)
+                                c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
+                                c.drawString(nx+sw+0.5,ny+6,'·')
+                            elif ul.startswith(':-.'):
+                                c.setLineWidth(0.6)
+                                c.line(nx,ny-1.5,nx+sw,ny-1.5)
+                                c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
+                                c.drawString(nx+sw+0.5,ny+6,'·')
+                            elif ul.startswith(':-'):
+                                c.setLineWidth(0.6)
+                                c.line(nx,ny-1.5,nx+sw,ny-1.5)
+                            elif ul=='.,':
+                                c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
+                                c.drawString(nx+sw+0.5,ny+6,'·,')
                             elif ul=='.':
                                 c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
                                 c.drawString(nx+sw+0.5,ny+6,'·')
+                            elif ul==',':
+                                c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
+                                c.drawString(nx+sw+0.5,ny+6,',')
                             # Slur
                             if 'slur' in n.special:
                                 c.setFont(font_base + "-Italic", SOLFA_FONT_SIZE)
