@@ -3027,27 +3027,8 @@ class TonicSolfaStudio(tk.Tk):
         self.props_panel._stop=self._stop
         paned.add(self.props_panel,minsize=190,width=215)
 
-        # Right-side tools dashboard
-        self.tools_dashboard = tk.Frame(paned,bg=PANEL,width=220)
-        self.tools_dashboard.pack_propagate(False)
-        paned.add(self.tools_dashboard,minsize=180)
-
-        tk.Label(self.tools_dashboard,text="🛠 Utility Dashboard",bg=PANEL,fg=GOLD,
-            font=('Arial',11,'bold')).pack(pady=(12,8),padx=10,anchor='w')
-
-        def dash_btn(label,cmd):
-            tk.Button(self.tools_dashboard,text=label,bg=BLUE,fg=WHITE,relief='flat',
-                font=('Arial',10),command=cmd).pack(fill='x',padx=10,pady=4)
-
-        dash_btn('Font Style Manager', self._open_font_styles)
-        dash_btn('Lyrics Manager', self._open_lyrics_manager)
-        dash_btn('Import Finale', self._import_finale)
-        dash_btn('Export Finale (MXL)', self._export_mxml)
-        dash_btn('Play Audio (MIDI)', self._play)
-        dash_btn('Render WAV', self._render_wav_from_score)
-
-        # Center: tabs
-        center=tk.Frame(paned,bg=DARK); paned.add(center,minsize=580)
+        # Center: tabs (MAIN WORKSPACE)
+        center=tk.Frame(paned,bg=DARK); paned.add(center,minsize=600)
         self.nb=ttk.Notebook(center); self.nb.pack(fill='both',expand=True)
 
         # Tab 0 – Traditional Tonic Solfa (PRIMARY — matches print)
@@ -3145,6 +3126,25 @@ class TonicSolfaStudio(tk.Tk):
         self.ref_panel=ReferencePanel(ref); self.ref_panel.pack(fill='both',expand=True)
 
         self.nb.bind('<<NotebookTabChanged>>',self._on_tab)
+
+        # Right-side tools dashboard (NOW ON THE RIGHT FOR MORE WORKSPACE)
+        self.tools_dashboard = tk.Frame(paned,bg=PANEL,width=220)
+        self.tools_dashboard.pack_propagate(False)
+        paned.add(self.tools_dashboard,minsize=180,width=220)
+
+        tk.Label(self.tools_dashboard,text="🛠 Utility Dashboard",bg=PANEL,fg=GOLD,
+            font=('Arial',11,'bold')).pack(pady=(12,8),padx=10,anchor='w')
+
+        def dash_btn(label,cmd):
+            tk.Button(self.tools_dashboard,text=label,bg=BLUE,fg=WHITE,relief='flat',
+                font=('Arial',10),command=cmd).pack(fill='x',padx=10,pady=4)
+
+        dash_btn('Font Style Manager', self._open_font_styles)
+        dash_btn('Lyrics Manager', self._open_lyrics_manager)
+        dash_btn('Import Finale', self._import_finale)
+        dash_btn('Export Finale (MXL)', self._export_mxml)
+        dash_btn('Play Audio (MIDI)', self._play)
+        dash_btn('Render WAV', self._render_wav_from_score)
 
     def _build_statusbar(self):
         sb=tk.Frame(self,bg=CARD,height=26); sb.pack(fill='x',side='bottom')
