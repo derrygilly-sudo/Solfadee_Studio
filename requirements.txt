@@ -3,6 +3,7 @@
 #
 # REQUIRED: Core functionality
 midiutil>=1.2.1              # MIDI file creation and export
+mido>=1.3.0                  # MIDI file handling and playback
 reportlab>=4.0.0             # PDF score export and printing
 music21>=9.0.0               # MusicXML import/export, advanced music theory
 pygame>=2.5.0                # Audio playback (MIDI preview)
