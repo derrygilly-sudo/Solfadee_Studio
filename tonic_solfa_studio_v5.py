@@ -1129,46 +1129,60 @@ class ConversionEngine:
                         # Track slur underline state (initialise before the render_notes loop):
                         slur_pdf_x0  = None
                         slur_pdf_y   = vy - voice_h/2 - 2.0   # position underline below syllable baseline
-                        for n in render_notes:
-                            beat_idx=round(pos/beat_unit)
-                            nx=mx+beat_idx*beat_w+beat_w*0.3
-                            ny=vy-voice_h/2+2
-                            syl=n.solfa(meas.key_sig)
-                            # Underline for half/whole
-                            ul=n.duration_underscores()
-                            # Duration visual markers
+                        # Pre-draw beat separators and internal beat barlines for this measure
+                        c.setFont(font_base + "-Bold", SOLFA_FONT_SIZE)
+                        beat_sep_w = c.stringWidth(":", font_base + "-Bold", SOLFA_FONT_SIZE)
+                        # Draw small internal barlines between beats (visual beat dividers)
+                        for bi in range(1, n_beats):
+                            bar_x = mx + bi * beat_w
+                            # draw a thin vertical divider to match canvas visual
+                            c.setLineWidth(0.4)
+                            c.setStrokeColorRGB(0.7, 0.6, 0.5)
+                            c.line(bar_x, vy - voice_h * 0.9, bar_x, vy - voice_h * 0.1)
+
+                        for idx, n in enumerate(render_notes):
+                            beat_idx = round(pos / beat_unit)
+                            nx = mx + beat_idx * beat_w + beat_w * 0.3
+                            ny = vy - voice_h / 2 + 2
+                            syl = n.solfa(meas.key_sig)
+                            # Duration marker raw value
+                            ul = n.duration_underscores()
+
+                            # Duration visual markers and beat separators
                             c.setFont(font_base + "-Bold", SOLFA_FONT_SIZE)
-                            c.setFillColorRGB(0.08,0.06,0.02)
-                            c.drawString(nx,ny,syl)
-                            sw=c.stringWidth(syl, font_base + "-Bold", SOLFA_FONT_SIZE)
-                            if ul.startswith(':-:-:-'):
-                                c.setLineWidth(0.6)
-                                c.line(nx,ny-1.5,nx+sw,ny-1.5)
-                                c.line(nx,ny-3,nx+sw,ny-3)
-                            elif ul.startswith(':-:-'):
-                                c.setLineWidth(0.6)
-                                c.line(nx,ny-1.5,nx+sw,ny-1.5)
-                                c.line(nx,ny-3.0,nx+sw,ny-3.0)
-                                c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
-                                c.drawString(nx+sw+0.5,ny+6,'·')
-                            elif ul.startswith(':-.'):
-                                c.setLineWidth(0.6)
-                                c.line(nx,ny-1.5,nx+sw,ny-1.5)
-                                c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
-                                c.drawString(nx+sw+0.5,ny+6,'·')
-                            elif ul.startswith(':-'):
-                                c.setLineWidth(0.6)
-                                c.line(nx,ny-1.5,nx+sw,ny-1.5)
-                            elif ul=='.,':
-                                c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
-                                c.drawString(nx+sw+0.5,ny+6,'·,')
-                            elif ul=='.':
-                                c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
-                                c.drawString(nx+sw+0.5,ny+6,'·')
-                            elif ul==',':
-                                c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
-                                c.drawString(nx+sw+0.5,ny+6,',')
-                            # ── Slur underline ────────────────────────────────────────
+                            c.setFillColorRGB(0.08, 0.06, 0.02)
+
+                            # Draw beat separator ':' immediately before the syllable
+                            try:
+                                c.drawString(nx - beat_sep_w - 2, ny, ":")
+                            except Exception:
+                                pass
+
+                            # Draw the syllable
+                            c.drawString(nx, ny, syl)
+                            sw = c.stringWidth(syl, font_base + "-Bold", SOLFA_FONT_SIZE)
+
+                            # Held-beat textual markers (draw as text " :- " instead of underline)
+                            if ul and ul.startswith(':-'):
+                                # Count how many ':-' groups and draw them spaced to the right
+                                groups = ul.count(':-')
+                                for g in range(groups):
+                                    gx = nx + sw + 4 + g * (beat_sep_w + 2)
+                                    c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE - 1)
+                                    c.drawString(gx, ny, ":-")
+
+                            # Dot subdivisions: if this note is short and next note shares beat, draw '.' between them
+                            if n.duration < beat_unit and idx + 1 < len(render_notes):
+                                next_n = render_notes[idx + 1]
+                                next_beat_idx = round((pos + n.beats) / beat_unit)
+                                # If next note falls on same beat index, draw subdivision dot between positions
+                                if next_beat_idx == beat_idx:
+                                    next_nx = mx + round((pos + n.beats) / beat_unit) * beat_w + beat_w * 0.3
+                                    midx = (nx + next_nx) / 2
+                                    c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE - 1)
+                                    c.drawString(midx, ny, '.')
+
+                            # Slur underline (textual line between start and stop)
                             if n.slur_start:
                                 slur_pdf_x0 = nx
 
@@ -1180,17 +1194,20 @@ class ConversionEngine:
 
                             if n.slur_stop:
                                 slur_pdf_x0 = None
+
                             # Tied
                             if n.tied:
-                                c.setFont(font_base + "-Italic", SOLFA_FONT_SIZE-2)
-                                c.drawString(nx+sw,ny,'~')
-                            # Dynamic
+                                c.setFont(font_base + "-Italic", SOLFA_FONT_SIZE - 2)
+                                c.drawString(nx + sw, ny, '~')
+
+                            # Dynamics
                             if n.dynamic:
-                                c.setFont("Times-Italic",7)
-                                c.setFillColorRGB(0.55,0,0)
-                                c.drawString(nx,ny-5,n.dynamic)
-                                c.setFillColorRGB(0.08,0.06,0.02)
-                            pos+=n.beats
+                                c.setFont("Times-Italic", 7)
+                                c.setFillColorRGB(0.55, 0, 0)
+                                c.drawString(nx, ny - 5, n.dynamic)
+                                c.setFillColorRGB(0.08, 0.06, 0.02)
+
+                            pos += n.beats
 
                     # Barline
                     c.setLineWidth(0.8 if mi==len(rm)-1 else 0.5)
