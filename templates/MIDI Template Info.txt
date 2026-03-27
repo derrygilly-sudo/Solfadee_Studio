@@ -1,0 +1,9 @@
+# MIDI Template Placeholder
+# MIDI files are binary format and cannot be created as text templates.
+# To create MIDI templates:
+# 1. Create a score in Tonic Solfa Studio
+# 2. Export it as MIDI (.mid or .midi)
+# 3. Save the exported file in this templates/ folder
+# 4. Use "Load Template..." to import it back
+#
+# This file serves as a reminder to create MIDI templates by exporting from the app.

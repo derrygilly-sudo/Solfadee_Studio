@@ -1,0 +1,42 @@
+{
+  "title": "Blank Piano Template",
+  "composer": "",
+  "lyricist": "",
+  "key_sig": "C",
+  "time_num": 4,
+  "time_den": 4,
+  "tempo_bpm": 120,
+  "clef": "treble",
+  "staff_type": "piano",
+  "num_staves": 2,
+  "measures": [
+    {
+      "time_num": 4,
+      "time_den": 4,
+      "key_sig": "C",
+      "clefs": ["treble", "bass"],
+      "notes": []
+    },
+    {
+      "time_num": 4,
+      "time_den": 4,
+      "key_sig": "C",
+      "clefs": ["treble", "bass"],
+      "notes": []
+    },
+    {
+      "time_num": 4,
+      "time_den": 4,
+      "key_sig": "C",
+      "clefs": ["treble", "bass"],
+      "notes": []
+    },
+    {
+      "time_num": 4,
+      "time_den": 4,
+      "key_sig": "C",
+      "clefs": ["treble", "bass"],
+      "notes": []
+    }
+  ]
+}

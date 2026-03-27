@@ -1,0 +1,24 @@
+# Tonic Solfa Studio — Python Dependencies
+# Install with: pip install -r requirements.txt
+#
+# REQUIRED: Core functionality
+midiutil>=1.2.1              # MIDI file creation and export
+reportlab>=4.0.0             # PDF score export and printing
+music21>=9.0.0               # MusicXML import/export, advanced music theory
+pygame>=2.5.0                # Audio playback (MIDI preview)
+Pillow>=10.0.0               # Image processing for score rendering
+
+# OPTIONAL: Enhanced audio export
+numpy>=1.21.0                # Numerical computing for audio synthesis
+scipy>=1.7.0                 # WAV file generation and processing (optional)
+pydub>=0.25.1                # MP3 and audio format conversion (optional)
+
+# OPTIONAL: Additional features
+pyttsx3>=2.90                # Text-to-speech for playback (optional)
+
+# OPTIONAL: GUI Enhancements (currently Tkinter is built-in)
+# wxPython>=4.1.0            # Alternative GUI framework (not needed yet)
+
+# Python version requirement: 3.8+
+# Install all: pip install -r requirements.txt
+# Install core only: pip install midiutil reportlab music21 pygame Pillow

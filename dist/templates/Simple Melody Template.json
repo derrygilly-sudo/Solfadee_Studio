@@ -1,0 +1,42 @@
+{
+  "title": "Simple Melody Template",
+  "composer": "",
+  "lyricist": "",
+  "key_sig": "C",
+  "time_num": 4,
+  "time_den": 4,
+  "tempo_bpm": 100,
+  "clef": "treble",
+  "staff_type": "single",
+  "num_staves": 1,
+  "measures": [
+    {
+      "time_num": 4,
+      "time_den": 4,
+      "key_sig": "C",
+      "clefs": ["treble"],
+      "notes": []
+    },
+    {
+      "time_num": 4,
+      "time_den": 4,
+      "key_sig": "C",
+      "clefs": ["treble"],
+      "notes": []
+    },
+    {
+      "time_num": 4,
+      "time_den": 4,
+      "key_sig": "C",
+      "clefs": ["treble"],
+      "notes": []
+    },
+    {
+      "time_num": 4,
+      "time_den": 4,
+      "key_sig": "C",
+      "clefs": ["treble"],
+      "notes": []
+    }
+  ]
+}
