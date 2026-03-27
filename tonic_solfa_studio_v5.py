@@ -125,11 +125,11 @@ SOLFA_FONT_SIZE = 10         # Default font size
 LYRIC_FONT_FAMILY = "Times"  # Font for lyrics
 LYRIC_FONT_SIZE = 7          # Size for lyrics
 ENGRAVER_FONTS = {
-    'Times': 'Times-Roman',
+    'Times': 'Times',
     'Helvetica': 'Helvetica',
     'Courier': 'Courier',
-    'Twi': 'Times-Roman',  # Placeholder, would need actual font
-    'Cape Coast': 'Times-Roman'  # Placeholder
+    'Twi': 'Times',  # Placeholder, would need actual font
+    'Cape Coast': 'Times'  # Placeholder
 }
 
 # Articulations
@@ -878,6 +878,9 @@ class ConversionEngine:
                 f"ReportLab not installed. Saved as text:\n{txt}\npip install reportlab")
             return
 
+        font_base = ENGRAVER_FONTS.get(SOLFA_FONT_FAMILY, "Times")
+        lyric_font_base = ENGRAVER_FONTS.get(LYRIC_FONT_FAMILY, "Times")
+
         w,h=A4
         c=rl_canvas.Canvas(path,pagesize=A4)
 
@@ -965,10 +968,10 @@ class ConversionEngine:
                             # Underline for half/whole
                             ul=n.duration_underscores()
                             # Dot above for eighth
-                            c.setFont(ENGRAVER_FONTS.get(SOLFA_FONT_FAMILY, "Times")+"-Bold", SOLFA_FONT_SIZE)
+                            c.setFont(font_base + "-Bold", SOLFA_FONT_SIZE)
                             c.setFillColorRGB(0.08,0.06,0.02)
                             c.drawString(nx,ny,syl)
-                            sw=c.stringWidth(syl,ENGRAVER_FONTS.get(SOLFA_FONT_FAMILY, "Times")+"-Bold", SOLFA_FONT_SIZE)
+                            sw=c.stringWidth(syl, font_base + "-Bold", SOLFA_FONT_SIZE)
                             if ul=='_':
                                 c.setLineWidth(0.6)
                                 c.line(nx,ny-1.5,nx+sw,ny-1.5)
@@ -977,15 +980,15 @@ class ConversionEngine:
                                 c.line(nx,ny-1.5,nx+sw,ny-1.5)
                                 c.line(nx,ny-3,nx+sw,ny-3)
                             elif ul=='.':
-                                c.setFont(ENGRAVER_FONTS.get(LYRIC_FONT_FAMILY, "Times")+"-Roman", LYRIC_FONT_SIZE-1)
+                                c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
                                 c.drawString(nx+sw+0.5,ny+6,'·')
                             # Slur
                             if 'slur' in n.special:
-                                c.setFont(ENGRAVER_FONTS.get(SOLFA_FONT_FAMILY, "Times")+"-Italic", SOLFA_FONT_SIZE)
+                                c.setFont(font_base + "-Italic", SOLFA_FONT_SIZE)
                                 c.drawString(nx+sw,ny,':')
                             # Tied
                             if n.tied:
-                                c.setFont(ENGRAVER_FONTS.get(SOLFA_FONT_FAMILY, "Times")+"-Italic", SOLFA_FONT_SIZE-2)
+                                c.setFont(font_base + "-Italic", SOLFA_FONT_SIZE-2)
                                 c.drawString(nx+sw,ny,'~')
                             # Dynamic
                             if n.dynamic:
@@ -1014,7 +1017,7 @@ class ConversionEngine:
                                 beat_idx=round(pos/beat_unit)
                                 beat_w=col_w/(meas.time_num+0.5)
                                 nx=mx+beat_idx*beat_w+beat_w*0.3
-                                c.setFont(ENGRAVER_FONTS.get(LYRIC_FONT_FAMILY, "Times")+"-Roman", LYRIC_FONT_SIZE)
+                                c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE)
                                 c.setFillColorRGB(0.1,0.2,0.38)
                                 c.drawString(nx,vy-voice_h-2,n.lyric)
                                 c.setFillColorRGB(0.08,0.06,0.02)
@@ -1047,11 +1050,12 @@ class ConversionEngine:
 
         # Footer key legend
         if y>20*mm:
-            c.setFont(ENGRAVER_FONTS.get(LYRIC_FONT_FAMILY, "Times")+"-Roman", LYRIC_FONT_SIZE)
+            lyric_font_base = ENGRAVER_FONTS.get(LYRIC_FONT_FAMILY, "Times")
+            c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE)
             c.setFillColorRGB(0.3,0.2,0.1)
             c.drawString(15*mm,15*mm,
                 "d=Do  r=Re  m=Mi  f=Fa  s=Sol  l=La  t=Ti  "
-                "' =higher octave  , =lower octave  — =held  0=rest  _=half  ==whole")
+                "ᶦ=high octave  ̲=low octave  —=held  0=rest  _=half  ==whole")
         c.save()
 
     @staticmethod
