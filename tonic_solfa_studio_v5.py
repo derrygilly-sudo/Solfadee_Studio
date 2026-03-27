@@ -20,6 +20,11 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict
 
+# External component integrations
+from font_styles_manager import FontStylesManager, FontStylesDialog
+from lyrics_manager import LyricsManager, LyricsEditorPanel
+from audio_engine import AudioConfig, AudioSynthesizer, WavFileWriter, Instrument
+
 # ═══════════════════════════════════════════════════════
 #  OPTIONAL LIBRARIES
 # ═══════════════════════════════════════════════════════
@@ -62,8 +67,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════
 #  CONSTANTS
 # ═══════════════════════════════════════════════════════
-APP_NAME    = "Tonic Solfa Studio Pro"
-APP_VERSION = "6.0"
+APP_NAME    = "SolfaDee Studio Pro v1.0"
+APP_VERSION = "1.0"
 SETTINGS_FILE = os.path.expanduser("~/.tonicsolfa6_settings.json")
 
 # Dark UI palette
@@ -98,6 +103,66 @@ CHROM_TO_SOLFA = {
     0:'d',2:'r',4:'m',5:'f',7:'s',9:'l',11:'t',
     1:'de',3:'re',6:'fe',8:'se',10:'le'
 }
+# Complete pitch-to-chromatic lookup — handles all enharmonic spellings
+PITCH_TO_CHROM = {
+    'C': 0,  'C#': 1,  'Db': 1,  'D': 2,  'D#': 3,  'Eb': 3,
+    'E': 4,  'E#': 5,  'Fb': 4,  'F': 5,  'F#': 6,  'Gb': 6,
+    'G': 7,  'G#': 8,  'Ab': 8,  'A': 9,  'A#': 10, 'Bb': 10,
+    'B': 11, 'B#': 0,  'Cb': 11
+}
+
+# Chromatic value of each key's tonic — no formula, no ambiguity
+KEY_TONIC_CHROM = {
+    'C': 0,  'G': 7,  'D': 2,  'A': 9,  'E': 4,
+    'B': 11, 'F#': 6, 'Gb': 6, 'Db': 1, 'Ab': 8,
+    'Eb': 3, 'Bb': 10,'F': 5
+}
+
+# Interval above tonic (semitones) → movable do syllable
+INTERVAL_TO_MOVABLE_DO = {
+    0:  'd',   # Tonic
+    1:  'de',  # Raised tonic (chromatic)
+    2:  'r',   # Supertonic
+    3:  're',  # Raised supertonic (chromatic)
+    4:  'm',   # Mediant
+    5:  'f',   # Subdominant
+    6:  'fe',  # Raised subdominant / tritone (chromatic)
+    7:  's',   # Dominant
+    8:  'se',  # Raised dominant (chromatic)
+    9:  'l',   # Submediant
+    10: 'le',  # Raised submediant (chromatic)
+    11: 't',   # Leading tone
+}
+
+# Key-to-scale mapping (cycle of fourths/fifths style)
+KEY_TO_SCALE = {
+    'C':  ['C', 'D', 'E', 'F', 'G', 'A', 'B'],
+    'G':  ['G', 'A', 'B', 'C', 'D', 'E', 'F#'],
+    'D':  ['D', 'E', 'F#', 'G', 'A', 'B', 'C#'],
+    'A':  ['A', 'B', 'C#', 'D', 'E', 'F#', 'G#'],
+    'E':  ['E', 'F#', 'G#', 'A', 'B', 'C#', 'D#'],
+    'B':  ['B', 'C#', 'D#', 'E', 'F#', 'G#', 'A#'],
+    'F#': ['F#', 'G#', 'A#', 'B', 'C#', 'D#', 'E#'],
+    'C#': ['C#', 'D#', 'E#', 'F#', 'G#', 'A#', 'B#'],
+    'F':  ['F', 'G', 'A', 'Bb', 'C', 'D', 'E'],
+    'Bb': ['Bb', 'C', 'D', 'Eb', 'F', 'G', 'A'],
+    'Eb': ['Eb', 'F', 'G', 'Ab', 'Bb', 'C', 'D'],
+    'Ab': ['Ab', 'Bb', 'C', 'Db', 'Eb', 'F', 'G'],
+    'Db': ['Db', 'Eb', 'F', 'Gb', 'Ab', 'Bb', 'C'],
+    'Gb': ['Gb', 'Ab', 'Bb', 'Cb', 'Db', 'Eb', 'F'],
+    'B♭': ['Bb', 'C', 'D', 'Eb', 'F', 'G', 'A'],  # Alt spellings
+    'E♭': ['Eb', 'F', 'G', 'Ab', 'Bb', 'C', 'D'],
+    'A♭': ['Ab', 'Bb', 'C', 'Db', 'Eb', 'F', 'G'],
+}
+
+# SOLFA_SYLLABLES for display
+SOLFA_SYLLABLES = ['d', 'r', 'm', 'f', 's', 'l', 't']
+
+# Subscript and superscript Unicode mappings
+SUBSCRIPT_MAP = {'0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', '5': '₅',
+                 '6': '₆', '7': '₇', '8': '₈', '9': '₉'}
+SUPERSCRIPT_MAP = {'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵',
+                   '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹'}
 KEY_SIGS = {
     'C':0,'G':1,'D':2,'A':3,'E':4,'B':5,'F#':6,
     'Gb':-6,'Db':-5,'Ab':-4,'Eb':-3,'Bb':-2,'F':-1
@@ -168,6 +233,8 @@ class MusNote:
     special:     str   = ''       # slur, fermata, etc.
     articulation:str   = ''
     fingering:   str   = ''
+    slur_start:  bool  = False
+    slur_stop:   bool  = False
     x:           float = field(default=0.0, repr=False)
     y:           float = field(default=0.0, repr=False)
 
@@ -197,27 +264,53 @@ class MusNote:
         if d >= 0.25: return ','          # sixteenth
         return ';'
 
-    def solfa_syllable(self,key:str='C')->str:
-        """Return the bare syllable (fixed Do + key signature accidentals)."""
-        if self.rest: return '0'
-        if self.pitch.endswith('#'):
-            base=self.pitch[:-1]; nc=(NOTE_TO_CHROM.get(base,0)+1)%12
-        elif self.pitch.endswith('b'):
-            base=self.pitch[:-1]; nc=(NOTE_TO_CHROM.get(base,0)-1)%12
-        else:
-            nc=NOTE_TO_CHROM.get(self.pitch,0)
-        return CHROM_TO_SOLFA.get(nc,'?')
+    def solfa_syllable(self, key: str = 'C') -> str:
+        """
+        Return movable-do syllable relative to the given key tonic.
+        Diatonic notes in any major key always produce d r m f s l t.
+        Chromatic syllables only appear for genuinely non-diatonic pitches.
+        """
+        if self.rest:
+            return '0'
+
+        # Resolve pitch to chromatic number 0-11
+        nc = PITCH_TO_CHROM.get(self.pitch)
+        if nc is None:
+            # Fallback for any unusual pitch string
+            base = self.pitch.rstrip('#b')
+            nc = NOTE_TO_CHROM.get(base, 0)
+            if '#' in self.pitch: nc = (nc + 1) % 12
+            if 'b' in self.pitch: nc = (nc - 1) % 12
+            nc = nc % 12
+
+        # Tonic chromatic value for this key
+        tonic = KEY_TONIC_CHROM.get(key, 0)
+
+        # Interval above tonic → movable do syllable
+        interval = (nc - tonic) % 12
+        return INTERVAL_TO_MOVABLE_DO.get(interval, '?')
 
     def solfa(self,key:str='C')->str:
-        """Full solfa symbol with octave markers on fixed Do."""
-        if self.rest: return '0'
-        syl=self.solfa_syllable(key)
-        ref_octave = 4
-        diff = self.octave - ref_octave
-        if diff > 0:
-            syl += "'"*diff
-        elif diff < 0:
-            syl += ","*abs(diff)
+        """Full solfa symbol with octave markers (subscripts/superscripts).
+        Reference: C4-B4 = plain text, C3-B3 = subscript 1, C5-B5 = superscript 1, etc."""
+        if self.rest:
+            return '0'
+
+        syl = self.solfa_syllable(key)
+        
+        # Octave-offset from reference octave (4 = C4-B4 as plain text)
+        octave_offset = self.octave - 4
+        
+        if octave_offset < 0:
+            # Subscript range: C3-B3 = 1, C2-B2 = 2, etc.
+            num_str = str(abs(octave_offset))
+            syl += ''.join(SUBSCRIPT_MAP.get(c, c) for c in num_str)
+        elif octave_offset > 0:
+            # Superscript range: C5-B5 = 1, C6-B6 = 2, etc.
+            num_str = str(octave_offset)
+            syl += ''.join(SUPERSCRIPT_MAP.get(c, c) for c in num_str)
+        # octave_offset == 0 → no mark (plain)
+        
         return syl
 
     def to_dict(self)->dict:
@@ -226,7 +319,8 @@ class MusNote:
                 'lyric':self.lyric,'dynamic':self.dynamic,
                 'accidental':self.accidental,'voice':self.voice,
                 'special':self.special,'articulation':self.articulation,
-                'fingering':self.fingering}
+                'fingering':self.fingering,'slur_start':self.slur_start,
+                'slur_stop':self.slur_stop}
 
     @classmethod
     def from_dict(cls,d:dict)->'MusNote':
@@ -409,106 +503,169 @@ class ConversionEngine:
         if comp is not None and comp.text: score.composer=comp.text.strip()
         if lyr  is not None and lyr.text:  score.lyricist=lyr.text.strip()
 
-        cur_divs=1; cur_key='C'; cur_tnum=4; cur_tden=4
-        cur_clef='treble'; cur_tempo=100
+        # ── Determine voice offset per part ────────────────────
+        # Maps part id → integer offset added to all voice numbers in that part
+        part_voice_offsets = {}
+        score_parts = root.findall('.//score-part')
+        for order, sp in enumerate(score_parts):
+            pid  = sp.get('id', f'P{order+1}')
+            name = ''
+            ne   = sp.find('part-name')
+            if ne is not None and ne.text: name = ne.text.strip().lower()
+            # Derive voice base from part name; fall back to order
+            if any(k in name for k in ('sop',)):
+                offset = 0   # voice 1 → Soprano
+            elif any(k in name for k in ('alt', 'alto')):
+                offset = 1   # voice 1 → Alto
+            elif any(k in name for k in ('ten', 'tenor')):
+                offset = 2   # voice 1 → Tenor
+            elif any(k in name for k in ('bas', 'bass')):
+                offset = 3   # voice 1 → Bass
+            else:
+                offset = order  # generic fallback
+            part_voice_offsets[pid] = offset
 
-        for mel in root.findall('.//measure'):
-            m=Measure()
-            for attr in mel.findall('attributes'):
-                d_el=attr.find('divisions')
-                if d_el is not None and d_el.text:
-                    try: cur_divs=max(1,int(d_el.text))
-                    except: pass
-                k_el=attr.find('key')
-                if k_el is not None:
-                    fi=k_el.find('fifths')
-                    if fi is not None and fi.text:
-                        try: cur_key=FIFTHS_TO_KEY.get(int(fi.text),'C')
+        multi_part = len(score_parts) > 1
+
+        # ── Process each part ──────────────────────────────────
+        parts = root.findall('part')
+        if not parts:
+            parts = root.findall('.//part')
+
+        for part in parts:
+            pid = part.get('id', 'P1')
+            voice_offset = part_voice_offsets.get(pid, 0) if multi_part else 0
+
+            cur_divs  = 1; cur_key = 'C'; cur_tnum = 4; cur_tden = 4
+            cur_clef  = 'treble'; cur_tempo = 100
+            cur_transpose_semitones = 0   # ← NEW: for tenor 8va-bassa clef
+
+            for mel in part.findall('measure'):
+                m_num = 1
+                try: m_num = int(mel.get('number', '1'))
+                except: pass
+
+                # Ensure score has enough measures
+                while len(score.measures) < m_num:
+                    score.add_measure()
+                m = score.measures[m_num - 1]
+
+                for attr in mel.findall('attributes'):
+                    d_el = attr.find('divisions')
+                    if d_el is not None and d_el.text:
+                        try: cur_divs = max(1, int(d_el.text))
                         except: pass
-                t_el=attr.find('time')
-                if t_el is not None:
-                    be=t_el.find('beats'); bt=t_el.find('beat-type')
-                    if be is not None and be.text:
-                        try: cur_tnum=int(be.text)
+                    k_el = attr.find('key')
+                    if k_el is not None:
+                        fi = k_el.find('fifths')
+                        if fi is not None and fi.text:
+                            try: cur_key = FIFTHS_TO_KEY.get(int(fi.text), 'C')
+                            except: pass
+                    t_el = attr.find('time')
+                    if t_el is not None:
+                        be = t_el.find('beats'); bt = t_el.find('beat-type')
+                        if be is not None and be.text:
+                            try: cur_tnum = int(be.text)
+                            except: pass
+                        if bt is not None and bt.text:
+                            try: cur_tden = int(bt.text)
+                            except: pass
+                    c_el = attr.find('clef')
+                    if c_el is not None:
+                        se = c_el.find('sign')
+                        if se is not None and se.text:
+                            sg = se.text.upper()
+                            cur_clef = ('treble' if sg == 'G'
+                                        else ('bass' if sg == 'F' else 'alto'))
+
+                    # ── Transpose element (tenor 8va-bassa, etc.) ──
+                    tr_el = attr.find('transpose')
+                    if tr_el is not None:
+                        ch_el = tr_el.find('chromatic')
+                        if ch_el is not None and ch_el.text:
+                            try: cur_transpose_semitones = int(ch_el.text)
+                            except: cur_transpose_semitones = 0
+
+                for snd in mel.findall('.//sound'):
+                    t = snd.get('tempo')
+                    if t:
+                        try: cur_tempo = int(float(t))
                         except: pass
-                    if bt is not None and bt.text:
-                        try: cur_tden=int(bt.text)
+
+                m.time_num = cur_tnum; m.time_den = cur_tden
+                m.key_sig  = cur_key;  m.clef     = cur_clef
+                if m.tempo_bpm is None: m.tempo_bpm = cur_tempo
+
+                for nel in mel.findall('note'):
+                    n = MusNote()
+
+                    # Voice number + per-part offset
+                    v_el = nel.find('voice')
+                    if v_el is not None and v_el.text:
+                        try: n.voice = int(v_el.text) + voice_offset
                         except: pass
-                c_el=attr.find('clef')
-                if c_el is not None:
-                    se=c_el.find('sign')
-                    if se is not None and se.text:
-                        sg=se.text.upper()
-                        cur_clef='treble' if sg=='G' else ('bass' if sg=='F' else 'alto')
-            for snd in mel.findall('.//sound'):
-                t=snd.get('tempo')
-                if t:
-                    try: cur_tempo=int(float(t))
-                    except: pass
-            for dirn in mel.findall('direction'):
-                dyn_el=dirn.find('.//dynamics')
-                if dyn_el is not None:
-                    for child in dyn_el:
-                        tag=child.tag.split('}')[-1] if '}' in child.tag else child.tag
-                        m.dynamic=tag; break
-            for bl in mel.findall('barline'):
-                rep=bl.find('repeat')
-                if rep is not None:
-                    if rep.get('direction')=='forward':  m.repeat_start=True
-                    if rep.get('direction')=='backward': m.repeat_end=True
-            m.time_num=cur_tnum; m.time_den=cur_tden
-            m.key_sig=cur_key;   m.clef=cur_clef
-            m.tempo_bpm=cur_tempo; m.number=len(score.measures)+1
-            for nel in mel.findall('note'):
-                n=MusNote()
-                v_el=nel.find('voice')
-                if v_el is not None and v_el.text:
-                    try: n.voice=int(v_el.text)
-                    except: pass
-                st_el=nel.find('staff')
-                if st_el is not None and st_el.text:
-                    try:
-                        st=int(st_el.text)
-                        if st==2 and n.voice<=2: n.voice=n.voice+2
-                    except: pass
-                if nel.find('chord') is not None: continue
-                if nel.find('rest') is not None:
-                    n.rest=True
-                else:
-                    pe=nel.find('pitch')
-                    if pe is not None:
-                        step=pe.findtext('step','C')
-                        alter=pe.findtext('alter','0')
-                        octs=pe.findtext('octave','4')
-                        try: n.octave=int(octs)
-                        except: n.octave=4
-                        try:
-                            alt=int(float(alter))
-                            n.pitch=step+('#' if alt>0 else ('b' if alt<0 else ''))
-                        except: n.pitch=step
-                te=nel.find('type')
-                if te is not None and te.text:
-                    n.duration=DUR_TYPE_MAP.get(te.text.lower(),1.0)
-                else:
-                    de=nel.find('duration')
-                    if de is not None and de.text:
-                        try: n.duration=int(de.text)/cur_divs
-                        except: pass
-                if nel.find('dot') is not None: n.dotted=True
-                for tie in nel.findall('tie'):
-                    if tie.get('type')=='start': n.tied=True
-                le=nel.find('lyric')
-                if le is not None:
-                    txe=le.find('text')
-                    if txe is not None and txe.text: n.lyric=txe.text.strip()
-                # Dynamics on note
-                dyn_note=nel.find('.//dynamics')
-                if dyn_note is not None:
-                    for child in dyn_note:
-                        n.dynamic=child.tag.split('}')[-1] if '}' in child.tag else child.tag; break
-                m.notes.append(n)
-            if m.notes or m.tempo_bpm:
-                score.measures.append(m)
+
+                    # Staff-based voice remapping (single-part grand staff only)
+                    if not multi_part:
+                        st_el = nel.find('staff')
+                        if st_el is not None and st_el.text:
+                            try:
+                                st = int(st_el.text)
+                                if st == 2 and n.voice <= 2:
+                                    n.voice = n.voice + 2
+                            except: pass
+
+                    if nel.find('chord') is not None: continue
+
+                    if nel.find('rest') is not None:
+                        n.rest = True
+                    else:
+                        pe = nel.find('pitch')
+                        if pe is not None:
+                            step  = pe.findtext('step',  'C')
+                            alter = pe.findtext('alter', '0')
+                            octs  = pe.findtext('octave','4')
+                            try: n.octave = int(octs)
+                            except: n.octave = 4
+                            try:
+                                alt = int(float(alter))
+                                n.pitch = step + ('#' if alt > 0 else ('b' if alt < 0 else ''))
+                            except: n.pitch = step
+
+                        # ── Apply transpose to get concert pitch ──────────
+                        if cur_transpose_semitones != 0:
+                            midi_n = n.midi_num + cur_transpose_semitones
+                            midi_n = max(0, min(127, midi_n))
+                            n.pitch  = CHROM_TO_NOTE.get(midi_n % 12, 'C')
+                            n.octave = (midi_n // 12) - 1
+
+                    te = nel.find('type')
+                    if te is not None and te.text:
+                        n.duration = DUR_TYPE_MAP.get(te.text.lower(), 1.0)
+                    else:
+                        de = nel.find('duration')
+                        if de is not None and de.text:
+                            try: n.duration = int(de.text) / cur_divs
+                            except: pass
+                    if nel.find('dot') is not None: n.dotted = True
+                    for tie in nel.findall('tie'):
+                        if tie.get('type') == 'start': n.tied = True
+                    le = nel.find('lyric')
+                    if le is not None:
+                        txe = le.find('text')
+                        if txe is not None and txe.text: n.lyric = txe.text.strip()
+
+                    # ── Slur detection (see Issue 2) ─────────────────────
+                    notations_el = nel.find('notations')
+                    if notations_el is not None:
+                        for slur_el in notations_el.findall('slur'):
+                            stype = slur_el.get('type', '')
+                            if stype == 'start':
+                                n.slur_start = True
+                            elif stype == 'stop':
+                                n.slur_stop = True
+
+                    m.notes.append(n)
         if not score.measures: score.ensure_measures(4)
         if score.measures:
             first=score.measures[0]
@@ -955,23 +1112,28 @@ class ConversionEngine:
                         # merge tied notes into previous note
                         render_notes=[]
                         for n in vnotes:
-                            if n.tied and render_notes and n.pitch==render_notes[-1].pitch:
+                            if (n.tied
+                                    and render_notes
+                                    and n.pitch == render_notes[-1].pitch
+                                    and not n.slur_start
+                                    and not n.slur_stop):
                                 last=render_notes[-1]
                                 last.duration += n.duration
                                 last.dotted = last.dotted or n.dotted
                                 last.tied = n.tied
                                 last.special = (last.special+' '+n.special).strip()
+                                # Do NOT merge slur boundary flags across tied notes
                                 continue
                             render_notes.append(copy.copy(n))
                         pos=0.0
-                        last_slur_x=None
-                        last_slur_y=None
-                        last_slur_sw=None
+                        # Track slur underline state (initialise before the render_notes loop):
+                        slur_pdf_x0  = None
+                        slur_pdf_y   = vy - voice_h/2 - 2.0   # position underline below syllable baseline
                         for n in render_notes:
                             beat_idx=round(pos/beat_unit)
                             nx=mx+beat_idx*beat_w+beat_w*0.3
                             ny=vy-voice_h/2+2
-                            syl=n.solfa(score.key_sig)
+                            syl=n.solfa(meas.key_sig)
                             # Underline for half/whole
                             ul=n.duration_underscores()
                             # Duration visual markers
@@ -986,6 +1148,7 @@ class ConversionEngine:
                             elif ul.startswith(':-:-'):
                                 c.setLineWidth(0.6)
                                 c.line(nx,ny-1.5,nx+sw,ny-1.5)
+                                c.line(nx,ny-3.0,nx+sw,ny-3.0)
                                 c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
                                 c.drawString(nx+sw+0.5,ny+6,'·')
                             elif ul.startswith(':-.'):
@@ -1005,16 +1168,18 @@ class ConversionEngine:
                             elif ul==',':
                                 c.setFont(lyric_font_base + "-Roman", LYRIC_FONT_SIZE-1)
                                 c.drawString(nx+sw+0.5,ny+6,',')
-                            # Slur
-                            if 'slur' in n.special:
-                                if last_slur_x is not None:
-                                    c.setLineWidth(0.8)
-                                    c.line(last_slur_x+last_slur_sw+2,last_slur_y+2,nx-2,ny+2)
-                                c.setFont(font_base + "-Italic", SOLFA_FONT_SIZE)
-                                c.drawString(nx+sw,ny,':')
-                                last_slur_x=nx; last_slur_y=ny; last_slur_sw=sw
-                            else:
-                                last_slur_x=None; last_slur_y=None; last_slur_sw=None
+                            # ── Slur underline ────────────────────────────────────────
+                            if n.slur_start:
+                                slur_pdf_x0 = nx
+
+                            if slur_pdf_x0 is not None:
+                                slur_x1 = nx + sw
+                                c.setLineWidth(0.7)
+                                c.setStrokeColorRGB(0.08, 0.06, 0.02)
+                                c.line(slur_pdf_x0, slur_pdf_y, slur_x1, slur_pdf_y)
+
+                            if n.slur_stop:
+                                slur_pdf_x0 = None
                             # Tied
                             if n.tied:
                                 c.setFont(font_base + "-Italic", SOLFA_FONT_SIZE-2)
@@ -1108,7 +1273,7 @@ class ConversionEngine:
                     for n in vnotes:
                         bi=int(round(pos/beat_unit))
                         if bi<meas.time_num:
-                            s=n.solfa(score.key_sig)
+                            s=n.solfa(meas.key_sig)
                             ul=n.duration_underscores()
                             if ul=='_': s=s+'_'
                             elif ul=='=': s=s+'='
@@ -1318,7 +1483,7 @@ class TraditionalSolfaCanvas(tk.Canvas):
                     if meas.dynamic and vi==0:
                         self.create_text(mx+3,vy+3,
                             text=meas.dynamic,fill=PAPER_DYN,font=self._font(self.F_DYN),anchor='nw')
-                    self._draw_measure_row(mx,vy,meas,voice,score.key_sig,meas_w)
+                    self._draw_measure_row(mx,vy,meas,voice,meas.key_sig,meas_w)
                     mx+=meas_w
 
             # Closing double barline
@@ -1346,6 +1511,15 @@ class TraditionalSolfaCanvas(tk.Canvas):
         beat_unit=4.0/meas.time_den
         vnotes=meas.voice_notes(voice)
 
+        # Build a direct beat-position → note mapping for slur tracking
+        beat_note_map = {}
+        pos = 0.0
+        for n in vnotes:
+            bi = int(round(pos / beat_unit))
+            if bi < beat_num:
+                beat_note_map[bi] = n
+            pos += n.beats
+
         # Build beat grid
         grid_syls=['·']*beat_num
         grid_dur =['']  *beat_num
@@ -1369,9 +1543,13 @@ class TraditionalSolfaCanvas(tk.Canvas):
                     grid_syls[bi+k]='—'
             pos+=n.beats
 
+        slur_underline_x0 = None   # x start of current slur underline
+        slur_underline_y  = vy_mid + int(11 * self.font_scale)
+
         for bi,sym in enumerate(grid_syls):
             bx=x+bi*bw
             bx_mid=bx+bw//2+(1 if bi>0 else 0)
+            note   = beat_note_map.get(bi)
 
             # Beat separator '|' between beats (traditional style from images)
             if bi>0:
@@ -1394,22 +1572,47 @@ class TraditionalSolfaCanvas(tk.Canvas):
                 item=self.create_text(bx_mid,vy_mid,text=sym,
                     fill=PAPER_INK,font=self._font(self.F_SYL),anchor='center')
 
-                # Underlines for duration (half=single, whole=double)
+                # Underlines for duration
                 ul=grid_dur[bi]
-                if ul in ('_','='):
-                    # Approximate text width
-                    tw=len(sym)*7*self.font_scale
-                    lx0=bx_mid-tw//2; lx1=bx_mid+tw//2
-                    self.create_line(lx0,vy_mid+9,lx1,vy_mid+9,fill=PAPER_INK,width=1)
-                    if ul=='=':
-                        self.create_line(lx0,vy_mid+12,lx1,vy_mid+12,fill=PAPER_INK,width=1)
-                elif ul=='.':
-                    # Dot above for eighth
-                    self.create_text(bx_mid+len(sym)*4,vy_mid-10,text='·',
-                        fill=PAPER_INK,font=self._font(self.F_UL),anchor='center')
-                elif ul==':':
-                    self.create_text(bx_mid+len(sym)*4,vy_mid-10,text=':',
-                        fill=PAPER_INK,font=self._font(self.F_UL),anchor='center')
+                if ul.startswith(':-:-:-'):
+                    tw = int(len(sym) * 7 * self.font_scale)
+                    lx0 = bx_mid - tw // 2; lx1 = bx_mid + tw // 2
+                    self.create_line(lx0, vy_mid + 9,  lx1, vy_mid + 9,  fill=PAPER_INK, width=1)
+                    self.create_line(lx0, vy_mid + 12, lx1, vy_mid + 12, fill=PAPER_INK, width=1)
+                elif ul.startswith(':-:-') or ul.startswith(':-:'):
+                    tw = int(len(sym) * 7 * self.font_scale)
+                    lx0 = bx_mid - tw // 2; lx1 = bx_mid + tw // 2
+                    self.create_line(lx0, vy_mid + 9,  lx1, vy_mid + 9,  fill=PAPER_INK, width=1)
+                    self.create_line(lx0, vy_mid + 12, lx1, vy_mid + 12, fill=PAPER_INK, width=1)
+                    self.create_text(bx_mid + len(sym) * 4, vy_mid - 10, text='·',
+                        fill=PAPER_INK, font=self._font(self.F_UL), anchor='center')
+                elif ul.startswith(':-'):
+                    tw = int(len(sym) * 7 * self.font_scale)
+                    lx0 = bx_mid - tw // 2; lx1 = bx_mid + tw // 2
+                    self.create_line(lx0, vy_mid + 9, lx1, vy_mid + 9, fill=PAPER_INK, width=1)
+                elif ul in ('.', '.,'):
+                    self.create_text(bx_mid + len(sym) * 4, vy_mid - 10, text='·',
+                        fill=PAPER_INK, font=self._font(self.F_UL), anchor='center')
+                elif ul == ',':
+                    self.create_text(bx_mid + len(sym) * 4, vy_mid - 10, text=',',
+                        fill=PAPER_INK, font=self._font(self.F_UL), anchor='center')
+
+                # ── Slur underline (tonic solfa convention) ────────────────
+                if note is not None:
+                    if note.slur_start:
+                        slur_underline_x0 = bx_mid - int(len(sym) * 3 * self.font_scale)
+
+                    if slur_underline_x0 is not None:
+                        # Extend underline to end of this syllable
+                        slur_x1 = bx_mid + int(len(sym) * 4 * self.font_scale)
+                        self.create_line(
+                            slur_underline_x0, slur_underline_y,
+                            slur_x1, slur_underline_y,
+                            fill=PAPER_INK, width=1
+                        )
+
+                    if note.slur_stop:
+                        slur_underline_x0 = None   # close the underline
 
                 # Tie mark
                 if grid_tie[bi]:
@@ -2579,6 +2782,11 @@ class TonicSolfaStudio(tk.Tk):
         self._hist=deque(maxlen=80); self._redo=deque(maxlen=80)
         self.settings=self._load_settings()
         self._snap()
+
+        self.font_manager = FontStylesManager()
+        self.lyrics_manager = LyricsManager()
+        self.audio_config = AudioConfig(tempo_bpm=self.score.tempo_bpm)
+
         self.smart_entry=SmartEntry(self.score,on_change=self._on_change)
         self._setup_style()
         self._build_menu()
@@ -2818,6 +3026,25 @@ class TonicSolfaStudio(tk.Tk):
         self.props_panel._play=self._play  # wire up
         self.props_panel._stop=self._stop
         paned.add(self.props_panel,minsize=190,width=215)
+
+        # Right-side tools dashboard
+        self.tools_dashboard = tk.Frame(paned,bg=PANEL,width=220)
+        self.tools_dashboard.pack_propagate(False)
+        paned.add(self.tools_dashboard,minsize=180)
+
+        tk.Label(self.tools_dashboard,text="🛠 Utility Dashboard",bg=PANEL,fg=GOLD,
+            font=('Arial',11,'bold')).pack(pady=(12,8),padx=10,anchor='w')
+
+        def dash_btn(label,cmd):
+            tk.Button(self.tools_dashboard,text=label,bg=BLUE,fg=WHITE,relief='flat',
+                font=('Arial',10),command=cmd).pack(fill='x',padx=10,pady=4)
+
+        dash_btn('Font Style Manager', self._open_font_styles)
+        dash_btn('Lyrics Manager', self._open_lyrics_manager)
+        dash_btn('Import Finale', self._import_finale)
+        dash_btn('Export Finale (MXL)', self._export_mxml)
+        dash_btn('Play Audio (MIDI)', self._play)
+        dash_btn('Render WAV', self._render_wav_from_score)
 
         # Center: tabs
         center=tk.Frame(paned,bg=DARK); paned.add(center,minsize=580)
@@ -3456,6 +3683,46 @@ class TonicSolfaStudio(tk.Tk):
             "Core features work without libraries.\n"
             "midiutil→MIDI export  reportlab→PDF  pygame→Playback  mido→MIDI import",
             parent=self)
+
+    def _open_font_styles(self):
+        try:
+            FontStylesDialog(self, self.font_manager)
+        except Exception as e:
+            messagebox.showerror("Font Style Manager", str(e), parent=self)
+
+    def _open_lyrics_manager(self):
+        try:
+            win = tk.Toplevel(self)
+            win.title("Lyrics Manager")
+            win.geometry("760x560")
+            LyricsEditorPanel(win, self.lyrics_manager).pack(fill='both', expand=True)
+        except Exception as e:
+            messagebox.showerror("Lyrics Manager", str(e), parent=self)
+
+    def _render_wav_from_score(self):
+        if not os.path.isdir(os.path.dirname(self.filepath or '')):
+            default_dir = os.getcwd()
+        else:
+            default_dir = os.path.dirname(self.filepath)
+        out_path = filedialog.asksaveasfilename(
+            parent=self,
+            defaultextension='.wav',
+            filetypes=[('WAV Audio', '*.wav')],
+            initialdir=default_dir,
+            title='Export Score as WAV'
+        )
+        if not out_path:
+            return
+
+        try:
+            self.audio_config.tempo_bpm = self.score.tempo_bpm
+            self.audio_config.instrument = Instrument.PIANO
+            synth = AudioSynthesizer(self.audio_config)
+            samples = synth.generate_from_score(self.score)
+            WavFileWriter.write_wav(out_path, samples, self.audio_config)
+            messagebox.showinfo('WAV Export', f'WAV saved to:\n{out_path}', parent=self)
+        except Exception as e:
+            messagebox.showerror('WAV Export Error', str(e), parent=self)
 
     def _guide(self):
         text="""TONIC SOLFA STUDIO v6.0 — Quick Guide
