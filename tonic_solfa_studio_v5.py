@@ -119,6 +119,19 @@ FLAT_BASS_SLOTS    = [8,5,9,6,10,7,11]
 DYNAMICS_LIST = ['pppp','ppp','pp','p','mp','mf','f','ff','fff','ffff',
                  'sf','sfz','sfp','fp','fz','rf','rfz','cresc.','dim.']
 
+# Font settings for traditional solfa
+SOLFA_FONT_FAMILY = "Times"  # Default font family
+SOLFA_FONT_SIZE = 10         # Default font size
+LYRIC_FONT_FAMILY = "Times"  # Font for lyrics
+LYRIC_FONT_SIZE = 7          # Size for lyrics
+ENGRAVER_FONTS = {
+    'Times': 'Times-Roman',
+    'Helvetica': 'Helvetica',
+    'Courier': 'Courier',
+    'Twi': 'Times-Roman',  # Placeholder, would need actual font
+    'Cape Coast': 'Times-Roman'  # Placeholder
+}
+
 # Articulations
 ARTICULATIONS = ['staccato','accent','tenuto','marcato','fermata',
                  'trill','mordent','turn','arpeggio','slur','tie']
@@ -210,8 +223,8 @@ class MusNote:
         syl = self.solfa_syllable(key)
         ref = 3 if self.voice>=3 else 4
         diff = self.octave - ref
-        if diff > 0:   syl = syl + "'"*diff      # high octave: superscript
-        elif diff < 0: syl = syl + ','*abs(diff)  # low octave: subscript
+        if diff > 0:   syl = syl + 'ᶦ'*diff      # high octave: superscript
+        elif diff < 0: syl = syl + '\u0332'*abs(diff)  # low octave: combining low line
         return syl
 
     def to_dict(self)->dict:
@@ -875,17 +888,19 @@ class ConversionEngine:
         if score.composer:
             c.drawRightString(w-15*mm,h-18*mm,score.composer)
         c.setFont("Times-Roman",10)
-        key_time=f"Key {score.key_sig}♭.  {score.time_num}/{score.time_den}."
+        key_time=f"Key {score.key_sig}♭."
         c.drawString(15*mm,h-26*mm,key_time)
+        time_sig=f"{score.time_num}/{score.time_den}"
+        c.drawString(15*mm,h-31*mm,time_sig)
         if score.measures and score.measures[0].dynamic:
             c.setFont("Times-Italic",10)
-            c.drawString(15*mm,h-31*mm,score.measures[0].dynamic)
+            c.drawString(15*mm,h-36*mm,score.measures[0].dynamic)
 
         # Horizontal rule
         c.setLineWidth(0.5)
-        c.line(15*mm,h-34*mm,w-15*mm,h-34*mm)
+        c.line(15*mm,h-39*mm,w-15*mm,h-39*mm)
 
-        y=h-40*mm
+        y=h-45*mm
         voices=score.all_voices()
         mpr=4  # measures per row
         rows=math.ceil(len(score.measures)/mpr)
@@ -950,10 +965,10 @@ class ConversionEngine:
                             # Underline for half/whole
                             ul=n.duration_underscores()
                             # Dot above for eighth
-                            c.setFont("Times-Bold",10)
+                            c.setFont(ENGRAVER_FONTS.get(SOLFA_FONT_FAMILY, "Times")+"-Bold", SOLFA_FONT_SIZE)
                             c.setFillColorRGB(0.08,0.06,0.02)
                             c.drawString(nx,ny,syl)
-                            sw=c.stringWidth(syl,"Times-Bold",10)
+                            sw=c.stringWidth(syl,ENGRAVER_FONTS.get(SOLFA_FONT_FAMILY, "Times")+"-Bold", SOLFA_FONT_SIZE)
                             if ul=='_':
                                 c.setLineWidth(0.6)
                                 c.line(nx,ny-1.5,nx+sw,ny-1.5)
@@ -962,11 +977,15 @@ class ConversionEngine:
                                 c.line(nx,ny-1.5,nx+sw,ny-1.5)
                                 c.line(nx,ny-3,nx+sw,ny-3)
                             elif ul=='.':
-                                c.setFont("Times-Roman",7)
+                                c.setFont(ENGRAVER_FONTS.get(LYRIC_FONT_FAMILY, "Times")+"-Roman", LYRIC_FONT_SIZE-1)
                                 c.drawString(nx+sw+0.5,ny+6,'·')
+                            # Slur
+                            if 'slur' in n.special:
+                                c.setFont(ENGRAVER_FONTS.get(SOLFA_FONT_FAMILY, "Times")+"-Italic", SOLFA_FONT_SIZE)
+                                c.drawString(nx+sw,ny,':')
                             # Tied
                             if n.tied:
-                                c.setFont("Times-Italic",8)
+                                c.setFont(ENGRAVER_FONTS.get(SOLFA_FONT_FAMILY, "Times")+"-Italic", SOLFA_FONT_SIZE-2)
                                 c.drawString(nx+sw,ny,'~')
                             # Dynamic
                             if n.dynamic:
@@ -995,7 +1014,7 @@ class ConversionEngine:
                                 beat_idx=round(pos/beat_unit)
                                 beat_w=col_w/(meas.time_num+0.5)
                                 nx=mx+beat_idx*beat_w+beat_w*0.3
-                                c.setFont("Times-Roman",7)
+                                c.setFont(ENGRAVER_FONTS.get(LYRIC_FONT_FAMILY, "Times")+"-Roman", LYRIC_FONT_SIZE)
                                 c.setFillColorRGB(0.1,0.2,0.38)
                                 c.drawString(nx,vy-voice_h-2,n.lyric)
                                 c.setFillColorRGB(0.08,0.06,0.02)
@@ -1028,7 +1047,7 @@ class ConversionEngine:
 
         # Footer key legend
         if y>20*mm:
-            c.setFont("Times-Roman",7)
+            c.setFont(ENGRAVER_FONTS.get(LYRIC_FONT_FAMILY, "Times")+"-Roman", LYRIC_FONT_SIZE)
             c.setFillColorRGB(0.3,0.2,0.1)
             c.drawString(15*mm,15*mm,
                 "d=Do  r=Re  m=Mi  f=Fa  s=Sol  l=La  t=Ti  "
@@ -1084,7 +1103,7 @@ class ConversionEngine:
         lines+=['','─'*66,
                 "KEY: d=Do r=Re m=Mi f=Fa s=Sol l=La t=Ti",
                 "     chromatic: de/re/fe/se/le (sharp)  ra/ma/la/ta (flat)",
-                "     '=high octave  ,=low octave  —=held  0=rest",
+                "     ᶦ=high octave  ̲=low octave  —=held  0=rest",
                 "     _=half note  ==whole note  .=eighth  :=semiquaver"]
         return '\n'.join(lines)
 
@@ -3233,7 +3252,7 @@ class TonicSolfaStudio(tk.Tk):
 
     def _score_props(self):
         win=tk.Toplevel(self,bg=PANEL); win.title("Score Properties")
-        win.geometry("480x340"); win.transient(self); win.grab_set()
+        win.geometry("480x400"); win.transient(self); win.grab_set()
         fields=[("Title",'title'),("Composer",'composer'),
                 ("Lyricist",'lyricist'),("Arranger",'arranger'),("Tempo",'tempo_bpm')]
         vs={}
@@ -3252,7 +3271,16 @@ class TonicSolfaStudio(tk.Tk):
         tk.Label(win,text="Time:",bg=PANEL,fg=MUTED,font=('Arial',9)).grid(row=row,column=0,padx=15,pady=6,sticky='e')
         tv=tk.StringVar(value=f"{self.score.time_num}/{self.score.time_den}")
         ttk.Combobox(win,textvariable=tv,values=TIME_SIGS,width=8,state='readonly').grid(row=row,column=1,sticky='w')
+        row+=1
+        tk.Label(win,text="Solfa Font:",bg=PANEL,fg=MUTED,font=('Arial',9)).grid(row=row,column=0,padx=15,pady=6,sticky='e')
+        sfv=tk.StringVar(value=SOLFA_FONT_FAMILY)
+        ttk.Combobox(win,textvariable=sfv,values=list(ENGRAVER_FONTS.keys()),width=12,state='readonly').grid(row=row,column=1,sticky='w')
+        row+=1
+        tk.Label(win,text="Lyric Font:",bg=PANEL,fg=MUTED,font=('Arial',9)).grid(row=row,column=0,padx=15,pady=6,sticky='e')
+        lfv=tk.StringVar(value=LYRIC_FONT_FAMILY)
+        ttk.Combobox(win,textvariable=lfv,values=list(ENGRAVER_FONTS.keys()),width=12,state='readonly').grid(row=row,column=1,sticky='w')
         def apply():
+            global SOLFA_FONT_FAMILY, LYRIC_FONT_FAMILY
             for attr,var in vs.items():
                 val=var.get()
                 if attr=='tempo_bpm':
@@ -3266,6 +3294,8 @@ class TonicSolfaStudio(tk.Tk):
                 self.score.time_num=num; self.score.time_den=den
                 for m in self.score.measures: m.time_num=num; m.time_den=den
             except: pass
+            SOLFA_FONT_FAMILY = sfv.get()
+            LYRIC_FONT_FAMILY = lfv.get()
             self._on_change(); self.props_panel.refresh(self.score); win.destroy()
         tk.Button(win,text="Apply",bg=ACCENT,fg=WHITE,relief='flat',
             command=apply).grid(row=row+1,column=1,pady=14,sticky='e',padx=5)
