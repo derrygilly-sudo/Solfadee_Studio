@@ -198,33 +198,26 @@ class MusNote:
         return ';'
 
     def solfa_syllable(self,key:str='C')->str:
-        """Return the bare syllable (d r m f s l t + chromatic variants)."""
+        """Return the bare syllable (fixed Do + key signature accidentals)."""
         if self.rest: return '0'
-        kb = key.rstrip('#b')
-        kc = NOTE_TO_CHROM.get(kb,0)
-        if '#' in key and len(key)>1: kc=(kc+1)%12
-        elif 'b' in key and len(key)>1: kc=(kc-1)%12
-        nb = self.pitch.rstrip('#b')
-        nc = NOTE_TO_CHROM.get(nb,0)
-        if '#' in self.pitch: nc=(nc+1)%12
-        elif 'b' in self.pitch: nc=(nc-1)%12
-        delta = (nc-kc)%12
-        if '#' in self.pitch and delta in CHROMATIC_SOLFA_SHARP:
-            syl = CHROMATIC_SOLFA_SHARP[delta]
-        elif 'b' in self.pitch and delta in CHROMATIC_SOLFA_FLAT:
-            syl = CHROMATIC_SOLFA_FLAT[delta]
+        if self.pitch.endswith('#'):
+            base=self.pitch[:-1]; nc=(NOTE_TO_CHROM.get(base,0)+1)%12
+        elif self.pitch.endswith('b'):
+            base=self.pitch[:-1]; nc=(NOTE_TO_CHROM.get(base,0)-1)%12
         else:
-            syl = CHROM_TO_SOLFA.get(delta,'d')
-        return syl
+            nc=NOTE_TO_CHROM.get(self.pitch,0)
+        return CHROM_TO_SOLFA.get(nc,'?')
 
     def solfa(self,key:str='C')->str:
-        """Full solfa symbol with octave marks."""
+        """Full solfa symbol with octave markers on fixed Do."""
         if self.rest: return '0'
-        syl = self.solfa_syllable(key)
-        ref = 3 if self.voice>=3 else 4
-        diff = self.octave - ref
-        if diff > 0:   syl = syl + 'ᶦ'*diff      # high octave: superscript
-        elif diff < 0: syl = syl + '\u0332'*abs(diff)  # low octave: combining low line
+        syl=self.solfa_syllable(key)
+        ref_octave = 4
+        diff = self.octave - ref_octave
+        if diff > 0:
+            syl += "'"*diff
+        elif diff < 0:
+            syl += ","*abs(diff)
         return syl
 
     def to_dict(self)->dict:
@@ -959,8 +952,22 @@ class ConversionEngine:
                         beat_unit=4.0/meas.time_den
                         n_beats=meas.time_num
                         beat_w=col_w/(n_beats+0.5)
-                        pos=0.0
+                        # merge tied notes into previous note
+                        render_notes=[]
                         for n in vnotes:
+                            if n.tied and render_notes and n.pitch==render_notes[-1].pitch:
+                                last=render_notes[-1]
+                                last.duration += n.duration
+                                last.dotted = last.dotted or n.dotted
+                                last.tied = n.tied
+                                last.special = (last.special+' '+n.special).strip()
+                                continue
+                            render_notes.append(copy.copy(n))
+                        pos=0.0
+                        last_slur_x=None
+                        last_slur_y=None
+                        last_slur_sw=None
+                        for n in render_notes:
                             beat_idx=round(pos/beat_unit)
                             nx=mx+beat_idx*beat_w+beat_w*0.3
                             ny=vy-voice_h/2+2
@@ -1000,8 +1007,14 @@ class ConversionEngine:
                                 c.drawString(nx+sw+0.5,ny+6,',')
                             # Slur
                             if 'slur' in n.special:
+                                if last_slur_x is not None:
+                                    c.setLineWidth(0.8)
+                                    c.line(last_slur_x+last_slur_sw+2,last_slur_y+2,nx-2,ny+2)
                                 c.setFont(font_base + "-Italic", SOLFA_FONT_SIZE)
                                 c.drawString(nx+sw,ny,':')
+                                last_slur_x=nx; last_slur_y=ny; last_slur_sw=sw
+                            else:
+                                last_slur_x=None; last_slur_y=None; last_slur_sw=None
                             # Tied
                             if n.tied:
                                 c.setFont(font_base + "-Italic", SOLFA_FONT_SIZE-2)
