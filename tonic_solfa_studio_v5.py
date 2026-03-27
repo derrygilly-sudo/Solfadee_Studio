@@ -291,26 +291,58 @@ class MusNote:
         return INTERVAL_TO_MOVABLE_DO.get(interval, '?')
 
     def solfa(self,key:str='C')->str:
-        """Full solfa symbol with octave markers (subscripts/superscripts).
-        Reference: C4-B4 = plain text, C3-B3 = subscript 1, C5-B5 = superscript 1, etc."""
+        """Full solfa symbol with octave markers.
+        Uses per-voice reference octaves (configurable per key) and marks
+        lower octaves with subscript digits (₁,₂...) and higher octaves with
+        apostrophe(s) (') as requested.
+
+        Mapping rules (defaults):
+        - Soprano: reference octave 4
+        - Alto:    reference octave 4
+        - Tenor:   reference octave 3
+        - Bass:    reference octave 2
+
+        These can be overridden per key in KEY_VOICE_REF_OCTAVE.
+        """
         if self.rest:
             return '0'
 
         syl = self.solfa_syllable(key)
-        
-        # Octave-offset from reference octave (4 = C4-B4 as plain text)
-        octave_offset = self.octave - 4
-        
+
+        # Per-key, per-voice reference octave table (defaults provided)
+        KEY_VOICE_REF_OCTAVE = {
+            # default mapping for common keys; keys not listed will fall back
+            # to the general defaults below
+            'C': {1:4, 2:4, 3:3, 4:2},
+            'F': {1:4, 2:4, 3:3, 4:2},
+            'G': {1:4, 2:4, 3:3, 4:2},
+            'D': {1:4, 2:4, 3:3, 4:2},
+            'A': {1:5, 2:4, 3:3, 4:2},
+            'Bb':{1:4, 2:4, 3:3, 4:2},
+            'Eb':{1:4, 2:4, 3:3, 4:2},
+            'Ab':{1:4, 2:4, 3:3, 4:2},
+            'Db':{1:4, 2:4, 3:3, 4:2},
+            'Gb':{1:4, 2:4, 3:3, 4:2},
+            'C#':{1:4, 2:4, 3:3, 4:2},
+            'F#':{1:4, 2:4, 3:3, 4:2},
+        }
+
+        # General defaults
+        defaults = {1:4, 2:4, 3:3, 4:2}
+        per_key = KEY_VOICE_REF_OCTAVE.get(key, defaults)
+        ref_oct = per_key.get(self.voice, defaults.get(self.voice, 4))
+
+        octave_offset = self.octave - ref_oct
+
         if octave_offset < 0:
-            # Subscript range: C3-B3 = 1, C2-B2 = 2, etc.
-            num_str = str(abs(octave_offset))
-            syl += ''.join(SUBSCRIPT_MAP.get(c, c) for c in num_str)
+            # use subscript numerals (₁,₂,...) for lower octaves
+            num = abs(octave_offset)
+            # combine digits (e.g., 12 -> '₁₂') though unlikely
+            syl += ''.join(SUBSCRIPT_MAP.get(d, d) for d in str(num))
         elif octave_offset > 0:
-            # Superscript range: C5-B5 = 1, C6-B6 = 2, etc.
-            num_str = str(octave_offset)
-            syl += ''.join(SUPERSCRIPT_MAP.get(c, c) for c in num_str)
-        # octave_offset == 0 → no mark (plain)
-        
+            # use apostrophe (') repeated for each octave above reference
+            syl += "'" * octave_offset
+
         return syl
 
     def to_dict(self)->dict:
