@@ -13,8 +13,15 @@ test_notes = [
 
 print("Octave Notation Test (Key=C):")
 print("=" * 50)
-for note, desc in test_notes:
+for note, expected in [
+    (test_notes[0][0], 'd2'),    # C2 -> d2
+    (test_notes[1][0], 'r1'),    # D3 -> r1
+    (test_notes[2][0], 'm'),     # E4 -> m
+    (test_notes[3][0], "f'"),  # F5 -> f'
+    (test_notes[4][0], "s''"), # G6 -> s''
+]:
     result = note.solfa('C')
-    print(f"{desc:20s} → solfa={result}")
+    print(f"note={note.pitch}{note.octave:2d} -> solfa={result}")
+    assert result == expected, f"Expected {expected}, got {result}"
 
-print("\n✓ Octave subscript/superscript mapping works correctly")
+print("\n✓ Octave style mapping works correctly")

@@ -55,6 +55,15 @@ class TestTonicSolfaStudio(unittest.TestCase):
         self.assertEqual(n.solfa(), 'd')
         self.assertEqual(n.solfa(key='G'), 'f')
 
+        n_low = MusNote('C', 3, duration=1.0)
+        self.assertEqual(n_low.solfa(), 'd1')
+
+        n_high = MusNote('C', 5, duration=1.0)
+        self.assertEqual(n_high.solfa(), "d'")
+
+        n_g_key = MusNote('G', 5, duration=1.0)
+        self.assertEqual(n_g_key.solfa(key='G'), "d'")
+
     def test_audio_engine_output(self):
         config = AudioConfig(sample_rate=22050, instrument=AudioConfig().instrument, tempo_bpm=120)
         synth = AudioSynthesizer(config)

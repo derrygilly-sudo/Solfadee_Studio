@@ -158,11 +158,12 @@ KEY_TO_SCALE = {
 # SOLFA_SYLLABLES for display
 SOLFA_SYLLABLES = ['d', 'r', 'm', 'f', 's', 'l', 't']
 
-# Subscript and superscript Unicode mappings
-SUBSCRIPT_MAP = {'0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', '5': '₅',
-                 '6': '₆', '7': '₇', '8': '₈', '9': '₉'}
-SUPERSCRIPT_MAP = {'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵',
-                   '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹'}
+# Subscript and superscript mappings
+# Output style is now plain digits for low octaves and apostrophes for high octaves.
+SUBSCRIPT_MAP = {'0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5',
+                 '6': '6', '7': '7', '8': '8', '9': '9'}
+SUPERSCRIPT_MAP = {'0': "'", '1': "'", '2': "''", '3': "'''", '4': "''''", '5': "'''''",
+                   '6': "''''''", '7': "'''''''", '8': "''''''''", '9': "'''''''''"}
 KEY_SIGS = {
     'C':0,'G':1,'D':2,'A':3,'E':4,'B':5,'F#':6,
     'Gb':-6,'Db':-5,'Ab':-4,'Eb':-3,'Bb':-2,'F':-1
@@ -209,11 +210,18 @@ def _xml_escape(s:str)->str:
              .replace('>','&gt;').replace('"','&quot;'))
 
 # Superscript/subscript for octave
+# Using the new standard:
+# - no marker for octave 4 (C4–B4)
+# - positive offset: apostrophe repeated (', '', etc)
+# - negative offset: plain numeric string (1,2,3...)
+# This reflects the user's requirement: replace subscript with digits and superscript with apostrophe.
 def octave_mark(n:int)->str:
-    """Return superscript for positive, subscript for negative octave offset."""
-    if n == 0: return ''
-    if n > 0:  return "'" * n          # e.g. d' = high do
-    else:       return ',' * abs(n)    # e.g. d, = low do
+    if n == 0:
+        return ''
+    if n > 0:
+        return "'" * n
+    # negative => plain digits from middle octave
+    return str(abs(n))
 
 # ═══════════════════════════════════════════════════════
 #  DATA MODEL
@@ -309,38 +317,15 @@ class MusNote:
 
         syl = self.solfa_syllable(key)
 
-        # Per-key, per-voice reference octave table (defaults provided)
-        KEY_VOICE_REF_OCTAVE = {
-            # default mapping for common keys; keys not listed will fall back
-            # to the general defaults below
-            'C': {1:4, 2:4, 3:3, 4:2},
-            'F': {1:4, 2:4, 3:3, 4:2},
-            'G': {1:4, 2:4, 3:3, 4:2},
-            'D': {1:4, 2:4, 3:3, 4:2},
-            'A': {1:5, 2:4, 3:3, 4:2},
-            'Bb':{1:4, 2:4, 3:3, 4:2},
-            'Eb':{1:4, 2:4, 3:3, 4:2},
-            'Ab':{1:4, 2:4, 3:3, 4:2},
-            'Db':{1:4, 2:4, 3:3, 4:2},
-            'Gb':{1:4, 2:4, 3:3, 4:2},
-            'C#':{1:4, 2:4, 3:3, 4:2},
-            'F#':{1:4, 2:4, 3:3, 4:2},
-        }
-
-        # General defaults
-        defaults = {1:4, 2:4, 3:3, 4:2}
-        per_key = KEY_VOICE_REF_OCTAVE.get(key, defaults)
-        ref_oct = per_key.get(self.voice, defaults.get(self.voice, 4))
-
-        octave_offset = self.octave - ref_oct
+        # Register control is global, based on middle octave C4–B4.
+        # This supports the user rule: one d per key, voice-independent.
+        octave_offset = self.octave - 4
 
         if octave_offset < 0:
-            # use subscript numerals (₁,₂,...) for lower octaves
-            num = abs(octave_offset)
-            # combine digits (e.g., 12 -> '₁₂') though unlikely
-            syl += ''.join(SUBSCRIPT_MAP.get(d, d) for d in str(num))
+            # use plain digits for lower octaves (1, 2, ...)
+            syl += str(abs(octave_offset))
         elif octave_offset > 0:
-            # use apostrophe (') repeated for each octave above reference
+            # use apostrophe for higher octaves (', '' ...)
             syl += "'" * octave_offset
 
         return syl
