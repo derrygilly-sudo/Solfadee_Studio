@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ╔══════════════════════════════════════════════════════════════╗
-║   TONIC SOLFA STUDIO  v5.0                                   ║
+║   SOLFADEE STUDIO  v5.0                                   ║
 ║   Professional Music Notation & Tonic Solfa Software         ║
 ║   Staff Notation ↔ Traditional Tonic Solfa  (SATB)           ║
 ║   MusicXML · MIDI · WAV · PDF · ABC · TSS Project            ║
@@ -143,13 +143,14 @@ KEY_HOME_NOTE_OCTAVE = {
 }
 
 def get_home_octave(key: str, voice: int) -> int:
-    base = KEY_HOME_NOTE_OCTAVE.get(key, 4)
-    if key in ['B', 'Bb']:
-        if voice in [1, 2]:  # soprano, alto
-            return 4
-        else:  # tenor, bass
-            return 3
-    return base
+    """Get home octave for solfa marking.
+    Default: soprano/alto use octave 4, tenor/bass use octave 3.
+    All keys follow this pattern.
+    """
+    if voice in [1, 2]:  # soprano, alto
+        return 4
+    else:  # tenor, bass
+        return 3
 
 # Typical voice ranges (for reference/documentation)
 VOICE_OCTAVE_RANGES = {
@@ -1606,27 +1607,13 @@ class TraditionalSolfaCanvas(tk.Canvas):
         if not vnotes:
             self.create_text(x+meas_w/2, vy_mid, text='—',
                 fill=PAPER_LINE, font=self._font(self.F_SYL), anchor='center')
-            return
-
-        # Draw each note at its beat position
-        Q = 960
-        beat_ticks = Q * 4 // meas.time_den
-        pos = 0
-        for n in vnotes:
-            dur_ticks = int(round(n.beats * Q))
-            sym = _note_display_symbol(n, key)
-            if sym:  # not empty
-                beat_pos = pos / beat_ticks
-                nx = x + 6 + beat_pos * self.beat_width
-                text_id = self.create_text(nx, vy_mid, text=sym,
-                    fill=PAPER_INK, font=self._font(self.F_SYL), anchor='center')
-                # Underline if slur
-                if n.slur_start or n.slur_stop:
-                    bbox = self.bbox(text_id)
-                    if bbox:
-                        self.create_line(bbox[0], bbox[3], bbox[2], bbox[3], fill=PAPER_INK, width=1)
-            pos += dur_ticks
-
+        else:
+            # Build measure string from notes
+            carry_hold = bool(vnotes and vnotes[0].tied)
+            mstr = build_measure_string(vnotes, key, meas.time_num, meas.time_den, carry_hold=carry_hold)
+            self.create_text(x+6, vy_mid, text=mstr,
+                fill=PAPER_INK, font=self._font(self.F_SYL), anchor='w')
+        
         # Closing barline
         self.create_line(x+meas_w,vy,x+meas_w,vy+self.VOICE_H,fill=PAPER_BAR,width=1)
 
@@ -2822,7 +2809,7 @@ class PropertiesPanel(tk.Frame):
         # Apply button
         btn_row=tk.Frame(self,bg=PANEL); btn_row.pack(fill='x',padx=6,pady=4)
         tk.Button(btn_row,text="Apply Layout",bg=ACCENT,fg=WHITE,relief='flat',
-            font=('Arial',8,'bold'),command=self._apply_page_layout).pack(side='left',fill='x',expand=True,padx=2)
+            font=('Arial',8,'bold'),command=lambda: self._apply_page_layout()).pack(side='left',fill='x',expand=True,padx=2)
     
     def _measure_resize_panel(self):
         """Measure resize and ruler tools."""
@@ -2849,7 +2836,7 @@ class PropertiesPanel(tk.Frame):
         # Apply button
         btn_row=tk.Frame(self,bg=PANEL); btn_row.pack(fill='x',padx=6,pady=4)
         tk.Button(btn_row,text="Apply Resize",bg=ORANGE,fg=WHITE,relief='flat',
-            font=('Arial',8,'bold'),command=self._apply_measure_resize).pack(side='left',fill='x',expand=True,padx=2)
+            font=('Arial',8,'bold'),command=lambda: self._apply_measure_resize()).pack(side='left',fill='x',expand=True,padx=2)
     
     def _apply_page_layout(self):
         """Apply page layout changes (connected to main app)."""
@@ -2895,6 +2882,11 @@ class TonicSolfaStudio(tk.Tk):
         self._hist=deque(maxlen=80); self._redo=deque(maxlen=80)
         self.settings=self._load_settings()
         self._snap()
+        
+        # Set templates folder as default for file dialogs
+        self.templates_dir = os.path.join(os.path.dirname(__file__), 'templates')
+        if not os.path.exists(self.templates_dir):
+            self.templates_dir = os.path.dirname(__file__)
 
         self.font_manager = FontStylesManager()
         self.lyrics_manager = LyricsManager()
@@ -3577,32 +3569,37 @@ class TonicSolfaStudio(tk.Tk):
     def _import_mxl(self):
         if not self._confirm(): return
         path=filedialog.askopenfilename(title="Import MusicXML/MXL",
-            filetypes=[("MusicXML/MXL","*.xml *.musicxml *.mxl"),("All","*.*")],parent=self)
+            filetypes=[("MusicXML/MXL","*.xml *.musicxml *.mxl"),("All","*.*")],
+            initialdir=self.templates_dir,parent=self)
         if path: self._load_file(path)
 
     def _import_midi(self):
         if not self._confirm(): return
         path=filedialog.askopenfilename(title="Import MIDI",
-            filetypes=[("MIDI","*.mid *.midi"),("All","*.*")],parent=self)
+            filetypes=[("MIDI","*.mid *.midi"),("All","*.*")],
+            initialdir=self.templates_dir,parent=self)
         if path: self._load_file(path)
 
     def _import_wav(self):
         if not self._confirm(): return
         path=filedialog.askopenfilename(title="Import WAV",
-            filetypes=[("WAV","*.wav"),("All","*.*")],parent=self)
+            filetypes=[("WAV","*.wav"),("All","*.*")],
+            initialdir=self.templates_dir,parent=self)
         if path: self._load_file(path)
 
     def _import_finale(self):
         if not self._confirm(): return
         path=filedialog.askopenfilename(title="Import Finale 2012/2014",
             filetypes=[("Finale Files","*.musx *.mus *.enigma"),
-                        ("All","*.*")],parent=self)
+                        ("All","*.*")],
+            initialdir=self.templates_dir,parent=self)
         if path: self._load_file(path)
 
     def _import_abc(self):
         if not self._confirm(): return
         path=filedialog.askopenfilename(title="Import ABC",
-            filetypes=[("ABC","*.abc"),("All","*.*")],parent=self)
+            filetypes=[("ABC","*.abc"),("All","*.*")],
+            initialdir=self.templates_dir,parent=self)
         if path: self._load_file(path)
 
     # ── Export ────────────────────────────────────────

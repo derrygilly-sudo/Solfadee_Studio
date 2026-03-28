@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['tonic_solfa_studio.py'],
+    ['tonic_solfa_studio_v5.py'],
     pathex=[],
     binaries=[],
     datas=[],
