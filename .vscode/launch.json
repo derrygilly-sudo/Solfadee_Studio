@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+
+    {
+      "name": "Run Tonic Solfa Studio",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tonic_solfa_studio.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Combine & Build studio",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/combine_studio.py",
+      "args": ["tonic_solfa_studio.py"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Run Solfa Canvas Pro (standalone)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/solfa_canvas_pro.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

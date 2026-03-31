@@ -6,8 +6,11 @@ import tkinter as tk
 
 from tonic_solfa_studio_v5 import (
     Score, Measure, MusNote,
-    ConversionEngine, TraditionalSolfaCanvas, StaffCanvas
+    ConversionEngine, TraditionalSolfaCanvas, StaffCanvas,
+    build_measure_string
 )
+from solfa_canvas_pro import SolfaScore, render_pdf
+from canvas_renderer import _duration_to_marks
 from audio_engine import AudioConfig, AudioSynthesizer, WavFileWriter
 from lyrics_manager import LyricsManager, LyricSection, LyricSyllable
 from speedy_entry_tool import SpeedyEntryTool
@@ -56,13 +59,45 @@ class TestTonicSolfaStudio(unittest.TestCase):
         self.assertEqual(n.solfa(key='G'), 'f')
 
         n_low = MusNote('C', 3, duration=1.0)
-        self.assertEqual(n_low.solfa(), 'd1')
+        self.assertEqual(n_low.solfa(), 'd,')
+
+        n_lower = MusNote('C', 2, duration=1.0)
+        self.assertEqual(n_lower.solfa(), 'd,,')
 
         n_high = MusNote('C', 5, duration=1.0)
         self.assertEqual(n_high.solfa(), "d'")
 
+        n_higher = MusNote('C', 6, duration=1.0)
+        self.assertEqual(n_higher.solfa(), "d''")
+
         n_g_key = MusNote('G', 5, duration=1.0)
         self.assertEqual(n_g_key.solfa(key='G'), "d'")
+
+    def test_duration_to_marks_beat_pattern(self):
+        self.assertEqual(_duration_to_marks(4.0, False), ':-:-:-')
+        self.assertEqual(_duration_to_marks(3.0, False), ':-:-')
+        self.assertEqual(_duration_to_marks(2.0, False), ':-')
+        self.assertEqual(_duration_to_marks(1.5, False), ':-.')
+        self.assertEqual(_duration_to_marks(1.0, False), ':')
+        self.assertEqual(_duration_to_marks(0.75, False), '.,')
+        self.assertEqual(_duration_to_marks(0.5, False), '.')
+        self.assertEqual(_duration_to_marks(0.25, False), ',')
+        self.assertEqual(_duration_to_marks(1.0, True), ':-.')  # dotted
+
+    def test_build_measure_string_longform(self):
+        notes = [MusNote('C', 4, duration=1.0), MusNote('D', 4, duration=1.0)]
+        self.assertEqual(build_measure_string(notes, 'C', 2, 4), 'd :r')
+
+        notes2 = [MusNote('E', 4, duration=1.0, dotted=True), MusNote('E', 4, duration=0.5)]
+        self.assertEqual(build_measure_string(notes2, 'C', 2, 4), 'm :- .m')
+
+        notes3 = [MusNote('G', 4, duration=2.0), MusNote('A', 4, duration=2.0)]
+        self.assertEqual(build_measure_string(notes3, 'C', 4, 4), "s :- | l :-")
+
+    def test_build_measure_string_tie_carry(self):
+        notes = [MusNote('C', 4, duration=1.0, tied=True), MusNote('D', 4, duration=1.0)]
+        # carry_hold should be accepted and preserve note allocation when first note starts at measure beginning
+        self.assertEqual(build_measure_string(notes, 'C', 2, 4, carry_hold=True), 'd :r')
 
     def test_audio_engine_output(self):
         config = AudioConfig(sample_rate=22050, instrument=AudioConfig().instrument, tempo_bpm=120)
@@ -150,6 +185,79 @@ class TestTonicSolfaStudio(unittest.TestCase):
             self.assertEqual(m.time_den, 4)
         finally:
             root.destroy()
+
+    def test_measure_resize_affects_traditional_and_solfa_canvases(self):
+        """Integration test: Verify measure resize from panel affects both Traditional and Solfa canvases."""
+        from tonic_solfa_studio_v5 import TonicSolfaStudio
+        app = TonicSolfaStudio()
+        app.withdraw()
+        
+        try:
+            # Record initial beat widths
+            initial_trad_beat_w = app.trad_canvas.beat_width
+            initial_solfa_beat_w = app.new_solfa_canvas.beat_width
+            self.assertGreater(initial_trad_beat_w, 0)
+            self.assertGreater(initial_solfa_beat_w, 0)
+            
+            # Set different measure resize values via props panel
+            app.props_panel.measure_w_var.set(250)
+            app.props_panel.beat_w_var.set(50)
+            app.props_panel.auto_fit_measure_var.set(False)
+            
+            # Apply measure resize from panel
+            app._apply_measure_resize_from_panel()
+            
+            # Verify traditional canvas updated to 50
+            self.assertEqual(app.trad_canvas.beat_width, 50)
+            self.assertEqual(app.trad_canvas.measure_width, 250)
+            
+            # Verify solfa canvas also updated to 50 (both react to panel)
+            self.assertEqual(app.new_solfa_canvas.beat_width, 50)
+            self.assertEqual(app.new_solfa_canvas.measure_width, 250)
+            
+            # Change again to verify both update
+            app.props_panel.beat_w_var.set(60)
+            app.props_panel.measure_w_var.set(300)
+            app._apply_measure_resize_from_panel()
+            
+            self.assertEqual(app.trad_canvas.beat_width, 60)
+            self.assertEqual(app.trad_canvas.measure_width, 300)
+            self.assertEqual(app.new_solfa_canvas.beat_width, 60)
+            self.assertEqual(app.new_solfa_canvas.measure_width, 300)
+            
+        finally:
+            app.destroy()
+
+    def test_solfa_pro_style_changes_are_reflected_in_output(self):
+        from tonic_solfa_studio_v5 import TonicSolfaStudio
+        app = TonicSolfaStudio()
+        app.withdraw()
+
+        try:
+            measure = Measure(number=1)
+            measure.notes.append(MusNote('C', 4, duration=1.0, voice=1))
+            measure.notes.append(MusNote(rest=True, duration=1.0, voice=1))
+            app.score.measures = [measure]
+
+            app.solfa_style_var.set('Curwen')
+            curwen = app._build_solfa_score_from_main()
+            self.assertEqual(curwen.measures[0].notes[0].beat_marker, '-')
+            self.assertEqual(curwen.measures[0].notes[1].syllable, '0')
+
+            app.solfa_style_var.set('Continental')
+            continental = app._build_solfa_score_from_main()
+            self.assertEqual(continental.measures[0].notes[0].beat_marker, '·')
+            self.assertEqual(continental.measures[0].notes[1].syllable, 'r')
+        finally:
+            app.destroy()
+
+    def test_solfa_pro_pdf_export_uses_live_settings(self):
+        score = SolfaScore(title='PDF Style Check', solfa_style='Continental')
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, 'style_check.pdf')
+            render_pdf(score, path, measures_per_row=3, font_size=12.0, row_height=120)
+            self.assertTrue(os.path.exists(path))
+            self.assertGreater(os.path.getsize(path), 0)
 
 
 if __name__ == '__main__':

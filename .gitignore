@@ -1,0 +1,22 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+
+# Build outputs
+build/
+dist/
+Solfadee Studio.spec
+*.spec.bak
+
+# Editor config
+.vscode/*.log
+
+# Local test/debug scratch files
+_verify_*.py
+*.log

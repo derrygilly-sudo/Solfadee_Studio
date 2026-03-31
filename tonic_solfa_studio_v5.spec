@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='tonic_solfa_studio',
+    name='tonic_solfa_studio_v5',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
