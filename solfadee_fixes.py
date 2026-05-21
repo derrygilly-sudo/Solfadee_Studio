@@ -122,33 +122,34 @@ except ImportError:
 #  lines, or leave them here and import from here instead.
 # ════════════════════════════════════════════════════════════════
 
-class ArticulationMark(Enum):
-    """Articulation mark types (stub — replaces missing models.ArticulationMark)."""
-    NONE        = "none"
-    STACCATO    = "staccato"
-    ACCENT      = "accent"
-    TENUTO      = "tenuto"
-    MARCATO     = "marcato"
-    FERMATA     = "fermata"
-    STACCATISSIMO = "staccatissimo"
+try:
+    from models import Octave, Accidental, ArticulationMark
+except ImportError:
+    class ArticulationMark(Enum):
+        """Articulation mark types (fallback stub)."""
+        NONE        = "none"
+        STACCATO    = "staccato"
+        ACCENT      = "accent"
+        TENUTO      = "tenuto"
+        MARCATO     = "marcato"
+        FERMATA     = "fermata"
+        STACCATISSIMO = "staccatissimo"
 
+    class Octave(Enum):
+        """Octave shorthand values (fallback stub)."""
+        LOW2  = 2
+        LOW   = 3
+        MID   = 4   # home octave
+        HIGH  = 5
+        HIGH2 = 6
 
-class Octave(Enum):
-    """Octave shorthand values (stub — replaces missing models.Octave)."""
-    LOW2  = 2
-    LOW   = 3
-    MID   = 4   # home octave
-    HIGH  = 5
-    HIGH2 = 6
-
-
-class Accidental(Enum):
-    """Accidental values (stub — replaces missing models.Accidental)."""
-    NATURAL      = ""
-    SHARP        = "#"
-    FLAT         = "b"
-    DOUBLE_SHARP = "##"
-    DOUBLE_FLAT  = "bb"
+    class Accidental(Enum):
+        """Accidental values (fallback stub)."""
+        NATURAL      = ""
+        SHARP        = "#"
+        FLAT         = "b"
+        DOUBLE_SHARP = "##"
+        DOUBLE_FLAT  = "bb"
 
 
 # ════════════════════════════════════════════════════════════════

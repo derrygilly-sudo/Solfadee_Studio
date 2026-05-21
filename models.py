@@ -6,7 +6,7 @@ tonic-solfa scores (as seen in Monto Dwom & Wasɔr by O. A. McPRINCE).
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Union
 from enum import Enum
 
 
@@ -161,7 +161,7 @@ class SolfaRest:
 
 
 # A beat-cell can hold one or more notes (for simultaneous parts on one beat)
-BeatItem = SolfaNote | SolfaRest
+BeatItem = Union[SolfaNote, SolfaRest]
 
 
 @dataclass
