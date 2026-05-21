@@ -1,5 +1,5 @@
-﻿#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
+# -*- coding: utf-8-sig -*-
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║   SOLFADEE STUDIO  v5.0                                   ║
@@ -14,11 +14,11 @@ Install optional libs:
 """
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
-import json, os, math, copy, struct, io, zipfile, time
+import json, os, sys, math, copy, struct, io, zipfile, time, tempfile
 import xml.etree.ElementTree as ET
 from collections import deque
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Callable
 
 # External component integrations
 from font_styles_manager import FontStylesManager, FontStylesDialog
@@ -39,6 +39,15 @@ from pdf_exporter import TonicSolfaPDFExporter
 from score_bridge import bridge_score_to_solfa
 from tonic_solfa_style_engine import StyleRegistry, SolfaStyleRenderer
 from solfadee_fixes import export_pdf_solfa_fixed, OctaveMarkMode
+
+
+def _resource_path(relative_path: str) -> str:
+    """Return an absolute path to a resource, compatible with PyInstaller."""
+    base_path = getattr(sys, '_MEIPASS', None)
+    if base_path is None:
+        base_path = os.path.abspath(os.path.dirname(__file__))
+    return os.path.join(base_path, relative_path)
+
 
 # ═══════════════════════════════════════════════════════
 #  OPTIONAL LIBRARIES
@@ -173,7 +182,20 @@ def get_home_octave(key: str, voice: int) -> int:
     """Get home octave for solfa marking.
     All voices share the same home note — the tonic of the key in octave 4.
     """
-    return 4   # always 4 — all voices share the same home octave
+    # Make home octave voice-aware: keep soprano/alto around tonic octave,
+    # lower the home octave for tenor and bass so octave markings reflect voice range.
+    base = KEY_HOME_NOTE_OCTAVE.get(key, 4)
+    try:
+        v = int(voice)
+    except Exception:
+        v = 1
+    if v in (1, 2):        # Soprano, Alto — use tonic octave
+        return base
+    if v == 3:             # Tenor — one octave below tonic
+        return max(0, base - 1)
+    if v == 4:             # Bass — two octaves below tonic (or at least one)
+        return max(0, base - 2)
+    return base
 
 # Typical voice ranges (for reference/documentation)
 VOICE_OCTAVE_RANGES = {
@@ -209,7 +231,7 @@ INTERVAL_TO_MOVABLE_DO = {
     7:  's',   # Dominant
     8:  'se',  # Raised dominant (chromatic)
     9:  'l',   # Submediant
-    10: 'ta',  # Raised submediant (chromatic), user requested ta despite le equivalence
+    10: 'le',  # Raised submediant (chromatic) — unified to 'le'
     11: 't',   # Leading tone
 }
 
@@ -417,9 +439,7 @@ def empty_measure_string(time_num:int)->str:
 # ═══════════════════════════════════════════════════════
 #  TOOLBAR ENHANCEMENTS
 # ═══════════════════════════════════════════════════════
-
 from enum import Enum
-from typing import Callable, Dict, Optional, List
 
 class Tool(Enum):
     """Available editing tools."""
@@ -460,13 +480,6 @@ class DynamicMark(Enum):
     RF = "rf"      # Rinforzando
     RFZ = "rfz"    # Rinforzando
 
-
-# ═══════════════════════════════════════════════════════
-#  TOOLBAR ENHANCEMENTS
-# ═══════════════════════════════════════════════════════
-
-from enum import Enum
-from typing import Callable, Dict, Optional, List
 
 # Stub definitions for missing models
 class ArticulationMark(Enum):
@@ -3093,6 +3106,7 @@ class SolfaTextPanel(tk.Frame):
                 fg=ACCENT)
 
     def _parse_and_apply(self, raw: str) -> int:
+        from collections import defaultdict
         voice_map = {
             'soprano': 1, 'melody': 1,
             'alto': 2,
@@ -3107,6 +3121,11 @@ class SolfaTextPanel(tk.Frame):
 
         current_voice = 1
         n_updated = 0
+
+        # Track which measures and voices were provided in the input so we can
+        # remove stale notes for voices that were intentionally omitted.
+        measures_seen = set()
+        voices_seen = defaultdict(set)  # measure_number -> set(voice_nums)
 
         for line in raw.splitlines():
             line = line.strip()
@@ -3131,10 +3150,15 @@ class SolfaTextPanel(tk.Frame):
             if m_num < 1 or m_num > len(self.score.measures):
                 continue
 
+            measures_seen.add(m_num)
+            voices_seen[m_num].add(current_voice)
+
             m = self.score.measures[m_num - 1]
             key = m.key_sig
 
-            # Remove old notes for this voice
+            # Remove old notes for this voice (we will later remove any other
+            # voices that were not present at all in the parsed input for this
+            # measure).
             m.notes = [n for n in m.notes if n.voice != current_voice]
 
             beat_unit = 4.0 / m.time_den
@@ -3187,6 +3211,15 @@ class SolfaTextPanel(tk.Frame):
                 if used + nn.beats <= beats_avail + 0.01:
                     m.notes.append(nn)
                     n_updated += 1
+
+        # Remove stale notes for voices that were not represented in the input
+        # for any measure that was touched by the parser.
+        for m_num in measures_seen:
+            m = self.score.measures[m_num - 1]
+            seen = voices_seen.get(m_num, set())
+            for v in range(1, 5):
+                if v not in seen:
+                    m.notes = [n for n in m.notes if n.voice != v]
 
         return n_updated
 
@@ -4021,14 +4054,15 @@ class TonicSolfaStudio(tk.Tk):
         self.score.ensure_measures(8)
         self.filepath=None; self.modified=False
         self._hist=deque(maxlen=80); self._redo=deque(maxlen=80)
+        self._snap_after_id = None
         self.settings=self._load_settings()
-        self._snap()
+        self._snap(immediate=True)
         
         # Octave rendering mode for PDF export (POSITIONAL, ASCII, or OFF)
         self.octave_mode = DEFAULT_OCTAVE_MODE
         
         # Set templates folder as default for file dialogs
-        self.templates_dir = os.path.join(os.path.dirname(__file__), 'templates')
+        self.templates_dir = _resource_path('templates')
         if not os.path.exists(self.templates_dir):
             self.templates_dir = os.path.dirname(__file__)
 
@@ -4418,7 +4452,7 @@ class TonicSolfaStudio(tk.Tk):
             bg=CARD, fg=GOLD, font=('Arial', 8, 'bold')).pack(side='left', padx=10)
         tk.Button(nc_ctrl, text="⟳ Sync from Score", bg=ACCENT, fg=WHITE,
             relief='flat', font=('Arial', 8),
-            command=self._sync_solfa_canvas).pack(side='right', padx=6, pady=3)
+            command=lambda: self._sync_solfa_canvas(force=True)).pack(side='right', padx=6, pady=3)
         tk.Button(nc_ctrl, text="⚡ Auto-Fit", bg=BLUE, fg=WHITE,
             relief='flat', font=('Arial', 8, 'bold'),
             command=self._auto_fit_solfa_canvas).pack(side='right', padx=6, pady=3)
@@ -4471,10 +4505,12 @@ class TonicSolfaStudio(tk.Tk):
 
         # Build a blank SolfaScore shell — filled by _sync_solfa_canvas on import
         _blank_solfa = self._build_solfa_score_from_main()
+        self._solfa_canvas_dirty = False
         self.new_solfa_canvas = SolfaCanvas(
             nc_frame, _blank_solfa,
             xscrollcommand=nc_hs.set,
-            yscrollcommand=nc_vs.set
+            yscrollcommand=nc_vs.set,
+            on_score_change=self._on_solfa_canvas_score_changed
         )
         self.solfa_style_var.set(getattr(_blank_solfa, 'solfa_style', 'Standard'))
         self.solfa_font_var.set(int(getattr(self.new_solfa_canvas, 'FONT_SIZE', 11)))
@@ -4593,7 +4629,7 @@ class TonicSolfaStudio(tk.Tk):
         self.props_panel.refresh(self.score)
         self.note_editor.score=self.score
         # Auto-sync Solfa Canvas after import
-        self._sync_solfa_canvas()
+        self._sync_solfa_canvas(force=True)
         self._update_title(); self._update_info()
         self.status_var.set(f"Ready — {APP_NAME} v{APP_VERSION}. Ctrl+P = Print Tonic Solfa PDF")
 
@@ -4745,11 +4781,41 @@ class TonicSolfaStudio(tk.Tk):
             f"{', '.join(VOICE_NAMES.get(v,str(v)) for v in vs)}")
 
     # ── Undo/Redo ─────────────────────────────────────
-    def _snap(self):
+    def _do_snap(self):
         try:
             self._hist.append(json.dumps(self.score.to_dict()))
             self._redo.clear()
-        except: pass
+        except Exception:
+            pass
+        finally:
+            # clear scheduled snapshot id
+            try:
+                self._snap_after_id = None
+            except Exception:
+                pass
+
+    def _snap(self, immediate: bool = False):
+        """Debounced snapshot: call with immediate=True to force an immediate snapshot.
+        Otherwise schedule a snapshot 300ms later (debounced).
+        """
+        if not hasattr(self, '_snap_after_id'):
+            self._snap_after_id = None
+        if immediate:
+            if getattr(self, '_snap_after_id', None):
+                try:
+                    self.after_cancel(self._snap_after_id)
+                except Exception:
+                    pass
+                self._snap_after_id = None
+            self._do_snap()
+            return
+        # schedule/replace a delayed snapshot
+        if getattr(self, '_snap_after_id', None):
+            try:
+                self.after_cancel(self._snap_after_id)
+            except Exception:
+                pass
+        self._snap_after_id = self.after(300, self._do_snap)
 
     def _undo(self):
         if len(self._hist)>1:
@@ -4773,7 +4839,7 @@ class TonicSolfaStudio(tk.Tk):
         self.solfa_panel.set_score(self.score)
         self.props_panel.refresh(self.score)
         self.note_editor.score=self.score
-        self._sync_solfa_canvas()
+        self._sync_solfa_canvas(force=True)
         self._update_title(); self._update_info()
 
     # ── File Operations ───────────────────────────────
@@ -4787,7 +4853,7 @@ class TonicSolfaStudio(tk.Tk):
         self.score=Score(title="Untitled Score"); self.score.ensure_measures(8)
         self.smart_entry=SmartEntry(self.score,on_change=self._on_change)
         self.filepath=None; self.modified=False
-        self._hist.clear(); self._redo.clear(); self._snap()
+        self._hist.clear(); self._redo.clear(); self._snap(immediate=True)
         self._initial_render(); self.status_var.set("New score created.")
 
     def _open(self):
@@ -4800,7 +4866,7 @@ class TonicSolfaStudio(tk.Tk):
                 self.score=Score.from_dict(json.load(f))
             self.smart_entry=SmartEntry(self.score,on_change=self._on_change)
             self.filepath=path; self.modified=False
-            self._hist.clear(); self._redo.clear(); self._snap()
+            self._hist.clear(); self._redo.clear(); self._snap(immediate=True)
             self._initial_render(); self.status_var.set(f"Opened: {path}")
         except Exception as e:
             messagebox.showerror("Open Error",str(e),parent=self)
@@ -4843,7 +4909,7 @@ class TonicSolfaStudio(tk.Tk):
                 messagebox.showwarning("Unsupported",f"Format not supported: {ext}",parent=self); return
             self.smart_entry=SmartEntry(self.score,on_change=self._on_change)
             self.filepath=None; self.modified=True
-            self._hist.clear(); self._redo.clear(); self._snap()
+            self._hist.clear(); self._redo.clear(); self._snap(immediate=True)
             self._initial_render()
             # Auto-sync the new solfa canvas
             if hasattr(self, 'new_solfa_canvas'):
@@ -5108,10 +5174,24 @@ class TonicSolfaStudio(tk.Tk):
         if not PYGAME_OK:
             messagebox.showinfo("Playback","Install pygame:\npip install pygame",parent=self); return
         try:
-            mid=ConversionEngine.export_midi_bytes_harmony(self.score)
-            pygame.mixer.music.load(io.BytesIO(mid))
+            mid = ConversionEngine.export_midi_bytes_harmony(self.score)
+            # Write MIDI bytes to a temporary file before loading — some SDL_mixer builds
+            # cannot load from a file-like object. Keep the path to allow cleanup later.
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.mid')
+            try:
+                tmp.write(mid)
+                tmp.flush()
+                tmp_path = tmp.name
+            finally:
+                tmp.close()
+            # Store last temp file for cleanup
+            try:
+                self._last_mid_tmp = tmp_path
+            except Exception:
+                self._last_mid_tmp = None
+            pygame.mixer.music.load(tmp_path)
             pygame.mixer.music.play()
-            vs=self.score.all_voices()
+            vs = self.score.all_voices()
             self.status_var.set(f"▶ Playing {len(vs)} voices: "
                                 f"{', '.join(VOICE_NAMES.get(v,str(v)) for v in vs)}")
         except Exception as e:
@@ -5121,6 +5201,14 @@ class TonicSolfaStudio(tk.Tk):
         if PYGAME_OK:
             try: pygame.mixer.music.stop()
             except: pass
+        # Attempt to remove last temp MIDI file if present
+        try:
+            tmpf = getattr(self, '_last_mid_tmp', None)
+            if tmpf and os.path.exists(tmpf):
+                os.remove(tmpf)
+                self._last_mid_tmp = None
+        except Exception:
+            pass
         self.status_var.set("⏹ Stopped.")
         if self.smart_entry.active:
             pass  # keep smart entry active
@@ -5301,13 +5389,34 @@ KEYBOARD SHORTCUTS:
 
         return base + (profile['upper'] * upper_count) + (profile['lower'] * low_count if low_count else '')
 
-    def _refresh_solfa_canvas_pro_view(self, status_message: Optional[str] = None):
+    def _on_solfa_canvas_score_changed(self, action: str = 'updated', score: Optional['SolfaScore'] = None):
+        """Remember that the user has live edits on the Solfa Canvas Pro view."""
+        self._solfa_canvas_dirty = True
+        if hasattr(self, 'status_var') and action != 'load-score':
+            self.status_var.set("✓ Solfa Canvas Pro edit saved in the live view.")
+
+    def _current_solfa_canvas_score(self) -> 'SolfaScore':
+        """Return the score currently displayed in Solfa Canvas Pro."""
+        if hasattr(self, 'new_solfa_canvas') and getattr(self.new_solfa_canvas, 'score', None) is not None:
+            live_score = self.new_solfa_canvas.score
+            if hasattr(live_score, 'solfa_style') and hasattr(self, 'solfa_style_var'):
+                live_score.solfa_style = self.solfa_style_var.get()
+            return live_score
+        return self._build_solfa_score_from_main()
+
+    def _refresh_solfa_canvas_pro_view(self, status_message: Optional[str] = None, sync_from_main: bool = False):
         """Reload the embedded Solfa Canvas Pro view using the current UI controls."""
         if not hasattr(self, 'new_solfa_canvas'):
             return
 
-        tsc = self._build_solfa_score_from_main()
-        self.new_solfa_canvas.load_score(tsc)
+        tsc = self._current_solfa_canvas_score()
+        if sync_from_main:
+            tsc = self._build_solfa_score_from_main()
+            self.new_solfa_canvas.load_score(tsc)
+            self._solfa_canvas_dirty = False
+
+        if hasattr(tsc, 'solfa_style') and hasattr(self, 'solfa_style_var'):
+            tsc.solfa_style = self.solfa_style_var.get()
 
         if hasattr(self.new_solfa_canvas, 'set_font_size') and hasattr(self, 'solfa_font_var'):
             self.new_solfa_canvas.set_font_size(self.solfa_font_var.get())
@@ -5315,6 +5424,8 @@ KEYBOARD SHORTCUTS:
             self.new_solfa_canvas.set_meas_per_row(self.solfa_mpr_var.get())
         if hasattr(self.new_solfa_canvas, 'set_row_height') and hasattr(self, 'solfa_row_h_var'):
             self.new_solfa_canvas.set_row_height(self.solfa_row_h_var.get())
+        if hasattr(self.new_solfa_canvas, 'redraw'):
+            self.new_solfa_canvas.redraw()
 
         if status_message and hasattr(self, 'status_var'):
             self.status_var.set(status_message)
@@ -5327,7 +5438,8 @@ KEYBOARD SHORTCUTS:
             bars = self.solfa_mpr_var.get() if hasattr(self, 'solfa_mpr_var') else 4
             row_h = self.solfa_row_h_var.get() if hasattr(self, 'solfa_row_h_var') else 96
             self._refresh_solfa_canvas_pro_view(
-                f"✓ Solfa Canvas Pro updated — {style}, {bars} bars/line, font {font}, row {row_h}px."
+                f"✓ Solfa Canvas Pro updated — {style}, {bars} bars/line, font {font}, row {row_h}px.",
+                sync_from_main=False
             )
         except Exception as e:
             if hasattr(self, 'status_var'):
@@ -5338,7 +5450,7 @@ KEYBOARD SHORTCUTS:
         if not hasattr(self, 'new_solfa_canvas'):
             return
         try:
-            self._refresh_solfa_canvas_pro_view()
+            self._refresh_solfa_canvas_pro_view(sync_from_main=False)
             if hasattr(self.new_solfa_canvas, 'auto_fit_notes'):
                 self.new_solfa_canvas.auto_fit_notes()
             if hasattr(self, 'status_var'):
@@ -5347,12 +5459,18 @@ KEYBOARD SHORTCUTS:
             if hasattr(self, 'status_var'):
                 self.status_var.set(f"Warning: Solfa Canvas Pro auto-fit failed: {e}")
 
-    def _sync_solfa_canvas(self):
+    def _sync_solfa_canvas(self, force: bool = False):
         """Convert current Score → SolfaScore and push to the SolfaCanvas."""
         if not hasattr(self, 'new_solfa_canvas'):
             return
         try:
-            self._refresh_solfa_canvas_pro_view("✓ Solfa Canvas Pro synced from current score.")
+            sync_from_main = force or not getattr(self, '_solfa_canvas_dirty', False)
+            status_message = (
+                "✓ Solfa Canvas Pro synced from current score."
+                if sync_from_main else
+                "✓ Solfa Canvas Pro kept your live edits. Use 'Sync from Score' to overwrite them."
+            )
+            self._refresh_solfa_canvas_pro_view(status_message, sync_from_main=sync_from_main)
         except Exception as e:
             if hasattr(self, 'status_var'):
                 self.status_var.set(f"Warning: Solfa Canvas sync failed: {e}")
@@ -5371,7 +5489,7 @@ KEYBOARD SHORTCUTS:
         if not path:
             return
         try:
-            score_for_export = self._build_solfa_score_from_main()
+            score_for_export = self._current_solfa_canvas_score()
             try:
                 _render_solfa_pdf(
                     score_for_export, path,
@@ -5477,32 +5595,6 @@ KEYBOARD SHORTCUTS:
             try: pygame.quit()
             except: pass
         self.destroy()
-
-    def _staff_config(self):
-        """Show staff configuration dialog."""
-        if not PIL_OK:
-            messagebox.showwarning("PIL Required",
-                "PIL (Pillow) library is required for staff configuration.\n"
-                "Install with: pip install pillow", parent=self)
-            return
-
-        dialog = tk.Toplevel(self)
-        dialog.title("Staff Configuration")
-        dialog.geometry("350x500")
-        dialog.configure(bg=DARK)
-        dialog.transient(self)
-        dialog.grab_set()
-
-        # Create the template integration panel
-        panel = TemplateIntegrationPanel(dialog, self.templates_dir,
-                                       on_template_select=self._on_staff_type_select)
-        panel.pack(fill='both', expand=True, padx=10, pady=10)
-
-        # Center the dialog
-        dialog.geometry("+{}+{}".format(
-            self.winfo_rootx() + 50,
-            self.winfo_rooty() + 50
-        ))
 
     def _staff_config(self):
         """Show staff configuration dialog."""
