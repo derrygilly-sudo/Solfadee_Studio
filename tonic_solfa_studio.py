@@ -98,7 +98,7 @@ except ImportError:
 #  CONSTANTS
 # ═══════════════════════════════════════════════════════
 APP_NAME    = "SolfaDee Studio Pro v1.0"
-APP_VERSION = "1.0"
+APP_VERSION = "1.0.1"
 SETTINGS_FILE = os.path.expanduser("~/.tonicsolfa6_settings.json")
 
 # Dark UI palette
@@ -350,10 +350,25 @@ def _solfa_octave_suffix(octave:int, middle:int=4)->str:
 def _note_display_symbol(note, key:str='C')->str:
     """Return the display symbol for one note using prefix marks for sub-beats."""
     if note.rest:
-        return '0'  # '0' for rests so beats are never invisible
+        return '-'  # use '-' for rests in Traditional canvas display instead of '0'
     syl = note.solfa(key)
     marks = note.duration_underscores()
     return f"{marks}{syl}" if marks else syl
+
+
+def _beat_marker_to_beats(marker: str) -> float:
+    if not isinstance(marker, str):
+        return 1.0
+    return {
+        ':-:-:-': 4.0,
+        ':-:-':  3.0,
+        ':-':    2.0,
+        ':-.':   1.5,
+        ':':     1.0,
+        '.,':    0.75,
+        '.':     0.5,
+        ',':     0.25,
+    }.get(marker, 1.0)
 
 
 def _join_measure_slots(slots:list, time_num:int)->str:
@@ -4686,6 +4701,11 @@ class TonicSolfaStudio(tk.Tk):
             row_gap=self.props_panel.page_gap_var.get(),
             font_scale=self.props_panel.page_scale_var.get(),
             show_bar_numbers=self.props_panel.page_barnum_var.get())
+        if hasattr(self, 'new_solfa_canvas'):
+            if hasattr(self.new_solfa_canvas, 'set_meas_per_row'):
+                self.new_solfa_canvas.set_meas_per_row(self.props_panel.page_mpr_var.get())
+            if hasattr(self.new_solfa_canvas, 'redraw'):
+                self.new_solfa_canvas.redraw()
         self.status_var.set("Page layout updated.")
         self._save_settings()
 
@@ -5392,8 +5412,85 @@ KEYBOARD SHORTCUTS:
     def _on_solfa_canvas_score_changed(self, action: str = 'updated', score: Optional['SolfaScore'] = None):
         """Remember that the user has live edits on the Solfa Canvas Pro view."""
         self._solfa_canvas_dirty = True
+        if score is not None and action != 'load-score':
+            self._sync_score_from_solfa_canvas(score)
+            self._on_change()
         if hasattr(self, 'status_var') and action != 'load-score':
             self.status_var.set("✓ Solfa Canvas Pro edit saved in the live view.")
+
+    def _sync_score_from_solfa_canvas(self, solfa_score: 'SolfaScore'):
+        """Apply live edits from the Solfa Canvas Pro score back to the main Score."""
+        if solfa_score is None or not hasattr(self, 'score'):
+            return
+
+        voices = self.score.all_voices()
+        if not voices:
+            return
+
+        for solfa_measure in solfa_score.measures:
+            if not isinstance(solfa_measure, type(solfa_score.measures[0])):
+                continue
+            if solfa_measure.number < 1 or solfa_measure.number > len(self.score.measures):
+                continue
+
+            main_measure = self.score.measures[solfa_measure.number - 1]
+            voice_groups = {}
+            for note in solfa_measure.notes:
+                voice_groups.setdefault(note.part_idx, []).append(note)
+
+            for part_idx, solfa_notes in voice_groups.items():
+                voice = voices[part_idx] if 0 <= part_idx < len(voices) else voices[0]
+                main_notes = [n for n in main_measure.notes if n.voice == voice]
+
+                for i, solfa_note in enumerate(solfa_notes):
+                    if i >= len(main_notes):
+                        break
+                    main_note = main_notes[i]
+                    pitch, octave, is_rest = self._parse_solfa_syllable_to_note(solfa_note.syllable, main_measure.key_sig, voice)
+                    main_note.rest = is_rest
+                    main_note.pitch = pitch
+                    main_note.octave = octave
+                    main_note.duration = self._beat_marker_to_beats(solfa_note.beat_marker)
+                    main_note.dotted = False
+                    main_note.lyric = solfa_note.lyric
+
+    def _parse_solfa_syllable_to_note(self, syllable: str, key: str, voice: int) -> tuple[str, int, bool]:
+        syl = (syllable or '').strip()
+        if not syl or syl in ('0', '-'):
+            return 'C', get_home_octave(key, voice), True
+
+        upper_count = 0
+        lower_count = 0
+        base = syl
+        while base.endswith("'"):
+            upper_count += 1
+            base = base[:-1]
+        while base.endswith(","):
+            lower_count += 1
+            base = base[:-1]
+
+        digit_chars = []
+        while base and base[-1].isdigit():
+            digit_chars.append(base[-1])
+            base = base[:-1]
+        while base and base[-1] in SUBSCRIPT_DIGITS:
+            digit_chars.append(str(SUBSCRIPT_DIGITS[base[-1]]))
+            base = base[:-1]
+        if digit_chars:
+            lower_count += int(''.join(reversed(digit_chars)))
+
+        base = base.lower()
+        if base in ('0', '-') or not base:
+            return 'C', get_home_octave(key, voice), True
+
+        chrom = ConversionEngine.SOLFA_TO_CHROM.get(base, None)
+        if chrom is None:
+            chrom = 0
+        tonic = KEY_TONIC_CHROM.get(key, 0)
+        pitch = CHROM_TO_NOTE.get((tonic + chrom) % 12, 'C')
+        octave = get_home_octave(key, voice) + upper_count - lower_count
+        octave = max(0, octave)
+        return pitch, octave, False
 
     def _current_solfa_canvas_score(self) -> 'SolfaScore':
         """Return the score currently displayed in Solfa Canvas Pro."""
@@ -5401,6 +5498,8 @@ KEYBOARD SHORTCUTS:
             live_score = self.new_solfa_canvas.score
             if hasattr(live_score, 'solfa_style') and hasattr(self, 'solfa_style_var'):
                 live_score.solfa_style = self.solfa_style_var.get()
+            if hasattr(live_score, 'octave_mode'):
+                live_score.octave_mode = self.octave_mode.name if hasattr(self, 'octave_mode') and hasattr(self.octave_mode, 'name') else getattr(self, 'octave_mode', 'OFF')
             return live_score
         return self._build_solfa_score_from_main()
 
@@ -5554,6 +5653,8 @@ KEYBOARD SHORTCUTS:
         )
         if hasattr(tsc, 'solfa_style'):
             tsc.solfa_style = current_style
+        if hasattr(tsc, 'octave_mode'):
+            tsc.octave_mode = self.octave_mode.name if hasattr(self, 'octave_mode') and hasattr(self.octave_mode, 'name') else getattr(self, 'octave_mode', 'OFF')
 
         voices = s.all_voices()
         # Map voice number → index in parts list (0-based)
