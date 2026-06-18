@@ -62,6 +62,21 @@ def duration_to_beat_marker(d: float) -> str:
     if d >= 0.25: return ','
     return ':'
 
+
+def _beat_marker_to_beats(marker: str) -> float:
+    if not isinstance(marker, str):
+        return 1.0
+    return {
+        ':-:-:-': 4.0,
+        ':-:-':  3.0,
+        ':-':    2.0,
+        ':-.':   1.5,
+        ':':     1.0,
+        '.,':    0.75,
+        '.':     0.5,
+        ',':     0.25,
+    }.get(marker, 1.0)
+
 KEY_NAMES = {0:'C',2:'D',4:'E',5:'F',7:'G',9:'A',11:'B',
              1:'C#',3:'D#',6:'F#',8:'G#',10:'A#'}
 FLAT_NAMES = {10:'Bb',8:'Ab',3:'Eb',1:'Db',6:'Gb'}
@@ -75,17 +90,19 @@ def semitone_to_key_name(s: int, mode: str = 'major') -> str:
 # ── Data Model ───────────────────────────────────────────────────────────────
 
 @dataclass
-class SolfaNote:
+class CanvasSolfaNote:
     syllable: str        # e.g. 'd', 'm'', 's₁'
     beat_marker: str     # e.g. ':', ':-', '.'
     is_rest: bool = False
     lyric: str = ''
     part_idx: int = 0    # voice/part index (0=soprano, etc.)
 
+SolfaNote = CanvasSolfaNote
+
 @dataclass
 class SolfaMeasure:
     number: int
-    notes: List[SolfaNote] = field(default_factory=list)
+    notes: List[CanvasSolfaNote] = field(default_factory=list)
     time_sig_num: int = 4
     time_sig_den: int = 4
 
@@ -99,6 +116,7 @@ class SolfaScore:
     composer: str = ''
     dedication: str = ''
     parts: List[str] = field(default_factory=lambda: ['Soprano','Alto','Tenor','Bass'])
+    octave_mode: str = 'OFF'   # 'POSITIONAL', 'ASCII', or 'OFF' — default OFF per user request
     measures: List[SolfaMeasure] = field(default_factory=list)
 
 
@@ -195,7 +213,7 @@ def parse_musicxml(path: str) -> SolfaScore:
                     if lyr_el is not None:
                         tx = lyr_el.find(tag('text'))
                         if tx is not None and tx.text: lyric = tx.text
-                    meas.notes.append(SolfaNote('-', bm, True, lyric, p_idx))
+                    meas.notes.append(CanvasSolfaNote('-', bm, True, lyric, p_idx))
                 else:
                     pitch_el = note_el.find(tag('pitch'))
                     if pitch_el is None: continue
@@ -211,7 +229,7 @@ def parse_musicxml(path: str) -> SolfaScore:
                     if lyr_el is not None:
                         tx = lyr_el.find(tag('text'))
                         if tx is not None and tx.text: lyric = tx.text
-                    meas.notes.append(SolfaNote(syllable, bm, False, lyric, p_idx))
+                    meas.notes.append(CanvasSolfaNote(syllable, bm, False, lyric, p_idx))
 
     score.doh_key = semitone_to_key_name(key_semitone, mode)
     score.measures = [measure_dict[k] for k in sorted(measure_dict)]
@@ -220,12 +238,12 @@ def parse_musicxml(path: str) -> SolfaScore:
 
 # ── Canvas Renderer ──────────────────────────────────────────────────────────
 
-class SolfaCanvas(tk.Canvas):
-    """Interactive Tonic Solfa notation canvas."""
+class LegacySolfaCanvas(tk.Canvas):
+    """Interactive Tonic Solfa notation canvas (legacy fallback)."""
 
     MARGIN_X     = 60
     MARGIN_TOP   = 110
-    ROW_HEIGHT   = 80     # per part row
+    ROW_HEIGHT   = 48     # per part row (single spacing)
     SYSTEM_GAP   = 28
     MEAS_PER_ROW = 4
     MEAS_MIN_W   = 160
@@ -371,14 +389,22 @@ class SolfaCanvas(tk.Canvas):
                              font=self.FONT_NOTE, fill='#aaa', anchor='w')
             return
 
-        # Lay notes evenly
-        slot_w = mw / max(len(notes), 1)
+        # Arrange notes by inferred duration so they align to beats in the measure.
+        beats = [max(0.25, _beat_marker_to_beats(n.beat_marker)) for n in notes]
+        total_beats = sum(beats)
+        measure_beats = max(1, meas.time_sig_num)
+        grid = max(measure_beats, total_beats)
+        available_w = max(1, mw - 12)
+        x_offset = x0 + 4
+        current_beat = 0.0
         for n_idx, note in enumerate(notes):
-            nx = x0 + n_idx * slot_w + 4
+            nx = x_offset + (current_beat / grid) * available_w
+            note_w = max(22.0, (beats[n_idx] / grid) * available_w - 6)
+            current_beat += beats[n_idx]
             # Build display string
-            syl  = note.syllable
-            bm   = note.beat_marker
-            txt  = f'{syl}{bm}' if not note.is_rest else f'-{bm}'
+            syl = self._normalize_syllable(note.syllable)
+            bm  = note.beat_marker
+            txt = f'{syl}{bm}' if not note.is_rest else f'-{bm}'
 
             key  = (meas_idx, n_idx, p_idx)
             is_sel = (key == self.selected)
@@ -386,7 +412,7 @@ class SolfaCanvas(tk.Canvas):
 
             # Highlight rect
             rect_id = self.create_rectangle(
-                nx - 2, y0 + 4, nx + slot_w - 2, y0 + self.ROW_HEIGHT - 4,
+                nx - 2, y0 + 4, nx + note_w - 2, y0 + self.ROW_HEIGHT - 4,
                 outline=self.SEL if is_sel else '', fill='#ddeeff' if is_sel else '',
                 tags=f'note_{meas_idx}_{n_idx}_{p_idx}')
 
@@ -459,11 +485,30 @@ class SolfaCanvas(tk.Canvas):
         self.selected = None
         self.redraw()
 
+    def _normalize_syllable(self, syl: str) -> str:
+        """Normalize display syllable: strip octave markers when score requests, and
+        avoid showing '0' as a rest placeholder (use '-')"""
+        if not syl:
+            return '-'
+        # If score requests octave markers off, strip common octave suffixes
+        if getattr(self, 'score', None) and getattr(self.score, 'octave_mode', 'OFF') == 'OFF':
+            # Keep leading letters (e.g., 'd','de','re') and drop trailing apostrophes/commas/subscripts
+            m = re.match(r"^[a-z]+", syl)
+            if m:
+                base = m.group(0)
+            else:
+                base = syl
+            syl = base
+        # Avoid showing '0' rest marker as literal zero in canvas
+        if syl == '0':
+            return '-'
+        return syl
+
     def add_note_to_selected_measure(self):
         if not self.score.measures: return
         mi = self.selected[0] if self.selected else len(self.score.measures) - 1
         pi = self.selected[2] if self.selected else 0
-        blank = SolfaNote('d', ':', False, '', pi)
+        blank = CanvasSolfaNote('d', ':', False, '', pi)
         dlg = NoteEditDialog(self, blank, title='Add Note')
         self.wait_window(dlg)
         if dlg.result:
@@ -503,7 +548,7 @@ class SolfaCanvas(tk.Canvas):
 class NoteEditDialog(tk.Toplevel):
     BEAT_OPTIONS = [':', ':-', ':-:-', ':-:-:-', ':-:.', '.', ',', '.,']
 
-    def __init__(self, parent, note: SolfaNote, title='Edit Note'):
+    def __init__(self, parent, note: CanvasSolfaNote, title='Edit Note'):
         super().__init__(parent)
         self.title(title)
         self.resizable(False, False)
@@ -514,8 +559,10 @@ class NoteEditDialog(tk.Toplevel):
         self.geometry('+%d+%d' % (parent.winfo_rootx()+200,
                                    parent.winfo_rooty()+200))
 
-    def _build(self, note: SolfaNote):
+    def _build(self, note: CanvasSolfaNote):
         pad = dict(padx=10, pady=6)
+        # Keep a reference to the note being edited so 'Apply' can update it in-place
+        self._note = note
 
         tk.Label(self, text='Syllable / Rest symbol:', font=('Courier',10)).grid(row=0,column=0,sticky='w',**pad)
         self._syl = tk.Entry(self, font=('Courier',12), width=10)
@@ -549,12 +596,34 @@ class NoteEditDialog(tk.Toplevel):
         bf.grid(row=5, column=0, columnspan=2, pady=8)
         tk.Button(bf, text='OK', width=8, command=self._ok,
                   bg='#2266cc', fg='white', font=('Courier',10,'bold')).pack(side='left', padx=6)
+        tk.Button(bf, text='Apply', width=8, command=self._apply_now,
+                  font=('Courier',10)).pack(side='left', padx=6)
         tk.Button(bf, text='Cancel', width=8, command=self.destroy,
                   font=('Courier',10)).pack(side='left')
 
         self._syl.focus_set()
         self.bind('<Return>', lambda e: self._ok())
         self.bind('<Escape>', lambda e: self.destroy())
+
+    def _apply_now(self):
+        """Apply current dialog values to the bound note in-place without closing."""
+        try:
+            syl = self._syl.get().strip() or 'd'
+            bm  = self._bm.get().strip()  or ':'
+            lyric = self._lyric.get()
+            is_rest = self._is_rest.get()
+            # Update the underlying note object if present
+            if hasattr(self, '_note') and self._note is not None:
+                self._note.syllable = syl
+                self._note.beat_marker = bm
+                self._note.lyric = lyric
+                self._note.is_rest = is_rest
+                try:
+                    self.master.redraw()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _apply_octave(self, suffix):
         cur = self._syl.get()
@@ -899,7 +968,8 @@ class SolfaApp(tk.Tk):
 
     def _new_score(self):
         self._score = SolfaScore()
-        self._canvas.load_score(self._score)
+        if hasattr(self, '_canvas'):
+            self._canvas.load_score(self._score)
         self._update_live()
         self._status('New score created.')
 
@@ -910,7 +980,8 @@ class SolfaApp(tk.Tk):
         if not path: return
         try:
             self._score = parse_musicxml(path)
-            self._canvas.load_score(self._score)
+            if hasattr(self, '_canvas'):
+                self._canvas.load_score(self._score)
             self._update_live()
             self._status(f'Loaded: {path}  |  {len(self._score.measures)} measures')
         except Exception as exc:
@@ -948,15 +1019,29 @@ class SolfaApp(tk.Tk):
             self._canvas._delete_selected()
             self._update_live()
 
+    def _add_measure(self):
+        if hasattr(self, '_canvas') and hasattr(self._canvas, 'add_measure'):
+            self._canvas.add_measure()
+            self._update_live()
+            self._status(f'Measure {len(self._score.measures)} added.')
+
+    def _auto_fit(self):
+        if hasattr(self, '_canvas') and hasattr(self._canvas, 'auto_fit_notes'):
+            self._canvas.auto_fit_notes()
+            self._update_live()
+            self._status('Notes auto-fitted to beats.')
+
     def _refresh(self):
-        self._canvas.redraw()
+        if hasattr(self, '_canvas'):
+            self._canvas.redraw()
         self._update_live()
 
     def _score_props(self):
         dlg = ScorePropsDialog(self, self._score)
         self.wait_window(dlg)
         if dlg.changed:
-            self._canvas.load_score(self._score)
+            if hasattr(self, '_canvas'):
+                self._canvas.load_score(self._score)
             self._update_live()
 
     def _status(self, msg: str):
@@ -1070,8 +1155,8 @@ try:
     SolfaMeasure = _ProSolfaMeasure
     _render_pdf = render_pdf
 except ImportError:
+    SolfaCanvas = LegacySolfaCanvas
     render_pdf = _render_pdf
-
 __all__ = [
     "SolfaCanvas",
     "SolfaScore",

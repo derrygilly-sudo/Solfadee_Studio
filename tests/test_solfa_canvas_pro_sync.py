@@ -4,10 +4,14 @@ import pytest
 def _has_usable_tk():
     try:
         import tkinter as tk
-        root = tk.Tk()
-        root.withdraw()
-        root.update()
-        root.destroy()
+        # If the Tcl library path is missing or invalid, Tk cannot start.
+        tcl_lib = getattr(tk, 'TCL_LIBRARY', None)
+        if tcl_lib and not os.path.isdir(tcl_lib):
+            return False
+
+        # A Tcl interpreter is enough to confirm Tcl/Tk availability.
+        interp = tk.Tcl()
+        interp.eval('expr {1 + 1}')
         return True
     except Exception:
         return False

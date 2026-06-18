@@ -94,6 +94,10 @@ class TestTonicSolfaStudio(unittest.TestCase):
         notes3 = [MusNote('G', 4, duration=2.0), MusNote('A', 4, duration=2.0)]
         self.assertEqual(build_measure_string(notes3, 'C', 4, 4), "s :- | l :-")
 
+    def test_build_measure_string_rest_display(self):
+        notes = [MusNote(rest=True, duration=1.0), MusNote('D', 4, duration=1.0)]
+        self.assertEqual(build_measure_string(notes, 'C', 2, 4), '- :r')
+
     def test_build_measure_string_tie_carry(self):
         notes = [MusNote('C', 4, duration=1.0, tied=True), MusNote('D', 4, duration=1.0)]
         # carry_hold should be accepted and preserve note allocation when first note starts at measure beginning
@@ -248,6 +252,34 @@ class TestTonicSolfaStudio(unittest.TestCase):
             continental = app._build_solfa_score_from_main()
             self.assertEqual(continental.measures[0].notes[0].beat_marker, '·')
             self.assertEqual(continental.measures[0].notes[1].syllable, 'r')
+        finally:
+            app.destroy()
+
+    def test_solfa_canvas_pro_keeps_manual_edits_when_view_refreshes(self):
+        from tonic_solfa_studio_v5 import TonicSolfaStudio
+        app = TonicSolfaStudio()
+        app.withdraw()
+
+        try:
+            measure = Measure(number=1)
+            measure.notes.append(MusNote('C', 4, duration=1.0, voice=1))
+            app.score.measures = [measure]
+            app._sync_solfa_canvas()
+
+            edited_note = app.new_solfa_canvas.score.measures[0].notes[0]
+            edited_note.syllable = 's'
+            edited_note.beat_marker = ':-'
+            edited_note.lyric = 'Edited'
+
+            app.solfa_font_var.set(13)
+            app.solfa_mpr_var.set(3)
+            app.solfa_row_h_var.set(110)
+            app._apply_solfa_pro_view()
+
+            refreshed_note = app.new_solfa_canvas.score.measures[0].notes[0]
+            self.assertEqual(refreshed_note.syllable, 's')
+            self.assertEqual(refreshed_note.beat_marker, ':-')
+            self.assertEqual(refreshed_note.lyric, 'Edited')
         finally:
             app.destroy()
 

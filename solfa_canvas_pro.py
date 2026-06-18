@@ -105,14 +105,21 @@ def _pdf_font_name(family: str, variant: str = 'regular') -> str:
     return variants.get(family, variants['Times']).get(variant, variants['Times']['regular'])
 
 
-def _display_syllable(score: 'SolfaScore', note: 'SolfaNote') -> str:
+def _display_syllable(score: 'SolfaScore', note: 'CanvasSolfaNote') -> str:
     profile = _style_profile(getattr(score, 'solfa_style', 'Standard'))
     if note.is_rest:
-        return profile['rest']
-    return note.syllable or profile['rest']
+        rest = profile['rest']
+        return '-' if rest == '0' else rest
+    syl = note.syllable or profile['rest']
+    if getattr(score, 'octave_mode', 'OFF') == 'OFF':
+        m = re.match(r'^[a-z]+', syl)
+        syl = m.group(0) if m else syl
+    if syl == '0':
+        return '-'
+    return syl
 
 
-def _display_beat_marker(score: 'SolfaScore', note: 'SolfaNote') -> str:
+def _display_beat_marker(score: 'SolfaScore', note: 'CanvasSolfaNote') -> str:
     profile = _style_profile(getattr(score, 'solfa_style', 'Standard'))
     marker = note.beat_marker or ''
     return marker.replace(':', profile.get('tie', ':'))
@@ -165,6 +172,21 @@ def duration_to_beat_marker(d: float) -> str:
     if d >= 0.25: return ','         # sixteenth
     return ':'
 
+
+def _beat_marker_to_beats(marker: str) -> float:
+    if not isinstance(marker, str):
+        return 1.0
+    return {
+        ':-:-:-': 4.0,
+        ':-:-':  3.0,
+        ':-':    2.0,
+        ':-.':   1.5,
+        ':':     1.0,
+        '.,':    0.75,
+        '.':     0.5,
+        ',':     0.25,
+    }.get(marker, 1.0)
+
 KEY_NAMES  = {0:'C',2:'D',4:'E',5:'F',7:'G',9:'A',11:'B',
               1:'C#',3:'D#',6:'F#',8:'G#',10:'A#'}
 FLAT_NAMES = {10:'Bb',8:'Ab',3:'Eb',1:'Db',6:'Gb'}
@@ -180,17 +202,19 @@ def semitone_to_key_name(s: int, mode: str = 'major') -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
-class SolfaNote:
+class CanvasSolfaNote:
     syllable    : str        # e.g. 'd', "m'", 's1'
     beat_marker : str        # e.g. ':', ':-', '.'
     is_rest     : bool = False
     lyric       : str  = ''
     part_idx    : int  = 0   # 0=Soprano / Treble, 1=Alto, 2=Tenor, 3=Bass
 
+SolfaNote = CanvasSolfaNote
+
 @dataclass
 class SolfaMeasure:
     number       : int
-    notes        : List[SolfaNote] = field(default_factory=list)
+    notes        : List[CanvasSolfaNote] = field(default_factory=list)
     time_sig_num : int = 4
     time_sig_den : int = 4
 
@@ -207,6 +231,7 @@ class SolfaScore:
     arranger    : str        = ''
     copyright   : str        = ''
     parts       : List[str]  = field(default_factory=lambda: ['Soprano','Alto','Tenor','Bass'])
+    octave_mode : str        = 'OFF'  # default to no octave markings
     measures    : List[SolfaMeasure] = field(default_factory=list)
     solfa_style : str        = 'Standard'
 
@@ -330,7 +355,7 @@ def parse_musicxml(path: str, style: str = "Standard") -> SolfaScore:
                     if tx is not None and tx.text: lyric = tx.text
 
                 if is_rest:
-                    meas.notes.append(SolfaNote('-', bm, True, lyric, p_idx))
+                    meas.notes.append(CanvasSolfaNote('-', bm, True, lyric, p_idx))
                 else:
                     pitch_el = note_el.find(tag('pitch'))
                     if pitch_el is None: continue
@@ -341,7 +366,7 @@ def parse_musicxml(path: str, style: str = "Standard") -> SolfaScore:
                     alter    = int(float(alt_el.text)) if alt_el is not None and alt_el.text else 0
                     octave   = int(oct_el.text) if oct_el is not None else 4
                     syllable = pitch_to_solfa(step, alter, octave, key_semitone, style)
-                    meas.notes.append(SolfaNote(syllable, bm, False, lyric, p_idx))
+                    meas.notes.append(CanvasSolfaNote(syllable, bm, False, lyric, p_idx))
 
     score.doh_key  = semitone_to_key_name(key_semitone, mode)
     score.measures = [measure_dict[k] for k in sorted(measure_dict)]
@@ -361,7 +386,7 @@ class SolfaCanvas(tk.Canvas):
     # ── Layout constants (adjustable via resize toolbar) ─────────────────────
     MARGIN_X     = 70
     MARGIN_TOP   = 120
-    ROW_HEIGHT   = 96      # per part row (voice) – extra breathing room
+    ROW_HEIGHT   = 48      # per part row (voice) – single spacing default
     SYSTEM_GAP   = 36
     MEAS_PER_ROW = 4       # default; auto-adjusts if ROW_HEIGHT changed
     MEAS_MIN_W   = 150
@@ -381,7 +406,7 @@ class SolfaCanvas(tk.Canvas):
 
     def _row_metrics(self):
         visual = self._current_visuals()
-        row_h = max(50, int(self.ROW_HEIGHT * float(visual.get('row_scale', 1.0))))
+        row_h = max(20, int(self.ROW_HEIGHT * float(visual.get('row_scale', 1.0))))
         sys_gap = max(16, int(self.SYSTEM_GAP * float(visual.get('gap_scale', 1.0))))
         return row_h, sys_gap
 
@@ -404,6 +429,7 @@ class SolfaCanvas(tk.Canvas):
         )
 
     def __init__(self, master, score: SolfaScore, **kw):
+        self._on_score_change = kw.pop('on_score_change', None)
         super().__init__(master, bg=self.BG, **kw)
         self.score      = score
         self.selected   : Optional[Tuple[int,int,int]] = None
@@ -442,6 +468,14 @@ class SolfaCanvas(tk.Canvas):
 
     def render(self):
         self.redraw()
+
+    def _notify_score_change(self, action: str = 'updated'):
+        callback = getattr(self, '_on_score_change', None)
+        if callable(callback):
+            try:
+                callback(action, self.score)
+            except TypeError:
+                callback()
 
     # ── layout helpers ────────────────────────────────────────────────────────
 
@@ -606,20 +640,28 @@ class SolfaCanvas(tk.Canvas):
                              font=F['note'], fill='#bbbbbb', anchor='w')
             return
 
-        # Leave generous inter-note padding (min 8px gap between slots)
-        slot_w = mw / max(len(notes), 1)
+        # Arrange notes by inferred duration so they align to beats in the measure.
+        beats = [max(0.25, _beat_marker_to_beats(n.beat_marker)) for n in notes]
+        total_beats = sum(beats)
+        measure_beats = max(1, meas.time_sig_num)
+        grid = max(measure_beats, total_beats)
+        available_w = max(1, mw - 12)
+        x_offset = x0 + 6
+        current_beat = 0.0
         for n_idx, note in enumerate(notes):
-            nx   = x0 + n_idx * slot_w + 6   # +6px left-inset per slot
-            syl  = _display_syllable(self.score, note)
-            bm   = _display_beat_marker(self.score, note)
+            nx = x_offset + (current_beat / grid) * available_w
+            note_w = max(22.0, (beats[n_idx] / grid) * available_w - 6)
+            current_beat += beats[n_idx]
+            syl = _display_syllable(self.score, note)
+            bm  = _display_beat_marker(self.score, note)
             # Separate syllable and beat marker with thin space for readability
-            txt  = syl + ' ' + bm if bm else syl
+            txt = syl + ' ' + bm if bm else syl
             key  = (meas_idx, n_idx, p_idx)
             sel  = (key == self.selected)
             clr  = self.SEL if sel else self.INK
 
             rect_id = self.create_rectangle(
-                nx - 2, y0 + 3, nx + slot_w - 2, y0 + row_h - 3,
+                nx - 2, y0 + 3, nx + note_w - 2, y0 + row_h - 3,
                 outline=self.SEL if sel else '',
                 fill='#dce8f8' if sel else '',
                 tags=f'note_{meas_idx}_{n_idx}_{p_idx}')
@@ -695,6 +737,9 @@ class SolfaCanvas(tk.Canvas):
         if ni >= len(notes): return
         note  = notes[ni]
         dlg   = NoteEditDialog(self, note, title='Edit Note')
+        if prefill and hasattr(dlg, '_syl'):
+            dlg._syl.delete(0, 'end')
+            dlg._syl.insert(0, prefill)
         self.wait_window(dlg)
         if dlg.result:
             note.syllable    = dlg.result['syllable']
@@ -702,6 +747,7 @@ class SolfaCanvas(tk.Canvas):
             note.lyric       = dlg.result['lyric']
             note.is_rest     = dlg.result['is_rest']
             self.redraw()
+            self._notify_score_change('edit-note')
 
     def _delete_selected(self, event=None):
         if self.selected is None: return
@@ -712,12 +758,13 @@ class SolfaCanvas(tk.Canvas):
             del meas.notes[part_notes[ni][0]]
         self.selected = None
         self.redraw()
+        self._notify_score_change('delete-note')
 
     def add_note_to_selected_measure(self):
         if not self.score.measures: return
         mi    = self.selected[0] if self.selected else len(self.score.measures) - 1
         pi    = self.selected[2] if self.selected else 0
-        blank = SolfaNote('d', ':', False, '', pi)
+        blank = CanvasSolfaNote('d', ':', False, '', pi)
         dlg   = NoteEditDialog(self, blank, title='Add Note')
         self.wait_window(dlg)
         if dlg.result:
@@ -727,12 +774,14 @@ class SolfaCanvas(tk.Canvas):
             blank.is_rest     = dlg.result['is_rest']
             self.score.measures[mi].notes.append(blank)
             self.redraw()
+            self._notify_score_change('add-note')
 
     def add_measure(self):
         n = len(self.score.measures) + 1
         self.score.measures.append(
             SolfaMeasure(n, [], self.score.time_num, self.score.time_den))
         self.redraw()
+        self._notify_score_change('add-measure')
 
     def auto_fit_notes(self):
         """Distribute notes evenly into measures (one note per beat)."""
@@ -747,6 +796,7 @@ class SolfaCanvas(tk.Canvas):
                     elif beats == 4:
                         note.beat_marker = ':' if i == 0 else (':-' if i == 1 else '.')
         self.redraw()
+        self._notify_score_change('auto-fit')
 
     def _update_scrollregion(self):
         self.update_idletasks()
@@ -764,7 +814,7 @@ class SolfaCanvas(tk.Canvas):
         self.redraw()
 
     def set_row_height(self, rh: int):
-        self.ROW_HEIGHT = max(50, min(160, rh))
+        self.ROW_HEIGHT = max(20, min(160, rh))
         self.redraw()
 
     def set_meas_per_row(self, mpr: int):
@@ -793,7 +843,7 @@ class NoteEditDialog(tk.Toplevel):
         ',',         # sixteenth
     ]
 
-    def __init__(self, parent, note: SolfaNote, title='Edit Note'):
+    def __init__(self, parent, note: CanvasSolfaNote, title='Edit Note'):
         super().__init__(parent)
         self.title(title)
         self.resizable(False, False)
@@ -804,7 +854,7 @@ class NoteEditDialog(tk.Toplevel):
         geom = f'+{parent.winfo_rootx()+200}+{parent.winfo_rooty()+200}'
         self.geometry(geom)
 
-    def _build(self, note: SolfaNote):
+    def _build(self, note: CanvasSolfaNote):
         pad = dict(padx=10, pady=5)
         TNR = 'Times New Roman'
 
@@ -1389,7 +1439,7 @@ class SolfaApp(tk.Tk):
         # Row height
         tk.Label(rb, text='  Row Height:', **LCF).pack(side='left', padx=(10,2))
         self._rh_var = tk.IntVar(value=88)
-        rh_sb = tk.Spinbox(rb, from_=50, to=160, textvariable=self._rh_var,
+        rh_sb = tk.Spinbox(rb, from_=20, to=160, textvariable=self._rh_var,
                             width=4, font=(TNR,9),
                             command=lambda: self._apply_layout())
         rh_sb.pack(side='left', padx=2)
@@ -1536,8 +1586,10 @@ class SolfaApp(tk.Tk):
         try:
             style = self._score.solfa_style
             self._score = parse_musicxml(path, style)
-            self._canvas.load_score(self._score)
-            self._style_cb.set(self._score.solfa_style)
+            if hasattr(self, '_canvas'):
+                self._canvas.load_score(self._score)
+            if hasattr(self, '_style_cb'):
+                self._style_cb.set(self._score.solfa_style)
             self._update_live()
             self._status(f'Loaded: {os.path.basename(path)}  '
                          f'| {len(self._score.measures)} measures '
@@ -1595,14 +1647,16 @@ class SolfaApp(tk.Tk):
             self._status('Notes auto-fitted to beats.')
 
     def _refresh(self):
-        self._canvas.redraw()
+        if hasattr(self, '_canvas'):
+            self._canvas.redraw()
         self._update_live()
 
     def _score_props(self):
         dlg = ScorePropsDialog(self, self._score)
         self.wait_window(dlg)
         if dlg.changed:
-            self._canvas.load_score(self._score)
+            if hasattr(self, '_canvas'):
+                self._canvas.load_score(self._score)
             self._update_live()
 
     def _set_font_size(self, sz: int):

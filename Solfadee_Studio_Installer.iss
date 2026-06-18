@@ -1,6 +1,6 @@
 ; Solfadee Studio installer script for Inno Setup 6
 #define MyAppName "Solfadee Studio"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "HP"
 #define MyAppExeName "Solfadee Studio.exe"
 

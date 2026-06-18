@@ -98,7 +98,7 @@ except ImportError:
 #  CONSTANTS
 # ═══════════════════════════════════════════════════════
 APP_NAME    = "SolfaDee Studio Pro v1.0"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 SETTINGS_FILE = os.path.expanduser("~/.tonicsolfa6_settings.json")
 
 # Dark UI palette
@@ -4508,7 +4508,7 @@ class TonicSolfaStudio(tk.Tk):
 
         tk.Label(nc_opts, text="Row H", bg=CARD, fg=TEXT, font=('Arial', 8)).pack(side='left', padx=(10, 4))
         self.solfa_row_h_var = tk.IntVar(value=96)
-        ttk.Spinbox(nc_opts, from_=50, to=160, width=5, textvariable=self.solfa_row_h_var,
+        ttk.Spinbox(nc_opts, from_=20, to=160, width=5, textvariable=self.solfa_row_h_var,
             command=self._apply_solfa_pro_view).pack(side='left', padx=2)
 
         tk.Button(nc_opts, text="Apply View", bg=ORANGE, fg=WHITE, relief='flat',
