@@ -23,7 +23,20 @@ from typing import List, Optional, Tuple, Dict
 import copy
 import os
 
-# ── PDF export ────────────────────────────────────────────────────────────────
+# ── MIDI import ─────────────────────────────────────────────────────────────
+try:
+    import mido
+    MIDO_OK = True
+except ImportError:
+    MIDO_OK = False
+
+MIDI_NOTE_TO_PITCH = {
+    0: ('C', 0), 1: ('C', 1), 2: ('D', 0), 3: ('D', 1),
+    4: ('E', 0), 5: ('F', 0), 6: ('F', 1), 7: ('G', 0),
+    8: ('G', 1), 9: ('A', 0), 10: ('A', 1), 11: ('B', 0),
+}
+
+# ── PDF export ──────────────────────────────────────────────────────────────
 try:
     from reportlab.pdfgen import canvas as rl_canvas
     from reportlab.lib.pagesizes import A4, LETTER
@@ -635,9 +648,26 @@ class SolfaCanvas(tk.Canvas):
                          x0 + mw, y0 + row_h,
                          fill=self.GRID, width=0.4, tags='gridline')
 
+        # ── Invisible full-cell hit region ──────────────────────────────
+        # Registers this (measure, part) cell as a click target even when
+        # it holds no notes yet, or has room past its last note. Key uses
+        # n_idx = -1 to mean "empty slot / insertion point" as distinct
+        # from an existing note index. Drawn BEFORE any note glyphs so
+        # note rects/text (added later, and therefore higher in the
+        # canvas stacking order) still win hit-testing priority in
+        # _on_click's reversed(items) scan.
+        empty_key = (meas_idx, -1, p_idx)
+        cell_id = self.create_rectangle(
+            x0, y0, x0 + mw, y0 + row_h,
+            outline='', fill=('#eef3fb' if empty_key == self.selected else ''),
+            tags=f'cell_{meas_idx}_{p_idx}')
+        self._items[cell_id] = empty_key
+
         if not notes:
             self.create_text(x0 + 6, base_y, text='-:-',
-                             font=F['note'], fill='#bbbbbb', anchor='w')
+                             font=F['note'],
+                             fill=self.SEL if empty_key == self.selected else '#bbbbbb',
+                             anchor='w')
             return
 
         # Arrange notes by inferred duration so they align to beats in the measure.
@@ -725,16 +755,70 @@ class SolfaCanvas(tk.Canvas):
                 return
 
     def _on_key(self, event):
-        if self.selected and event.char and event.char.isprintable():
+        if not (self.selected and event.char and event.char.isprintable()):
+            return
+        mi, ni, pi = self.selected
+        if mi >= len(self.score.measures):
+            return
+        if ni == -1:
+            # An empty cell (or blank space past the last note) is
+            # selected — typing here creates a fresh note, exactly
+            # mirroring the existing "type to edit" gesture used on
+            # already-populated notes.
+            self._insert_note_at(mi, pi, event.char)
+        else:
             self._edit_selected(event.char)
+
+    def _insert_note_at(self, mi: int, pi: int, prefill: str = ''):
+        """Create a new note in measure `mi`, part `pi`.
+
+        If `prefill` is exactly one of the seven solfa degrees (d r m f
+        s l t), the note is created immediately as a quarter-beat note
+        with that syllable — no dialog — matching the speed of typing a
+        syllable onto an existing note. Anything else (empty prefill,
+        or a character that isn't a bare degree, e.g. wanting a rest,
+        an octave mark, or a custom beat value) opens NoteEditDialog so
+        the full note can be specified, pre-seeded with whatever was
+        typed.
+        """
+        if mi >= len(self.score.measures):
+            return
+        syl = (prefill or '').strip().lower()
+        if syl in ('d', 'r', 'm', 'f', 's', 'l', 't'):
+            note = CanvasSolfaNote(syl, ':', False, '', pi)
+            self.score.measures[mi].notes.append(note)
+            notes_in_row = [n for n in self.score.measures[mi].notes if n.part_idx == pi]
+            self.selected = (mi, len(notes_in_row) - 1, pi)
+            self.redraw()
+            self._notify_score_change('add-note')
+            return
+        blank = CanvasSolfaNote('d', ':', False, '', pi)
+        dlg   = NoteEditDialog(self, blank, title='Add Note')
+        if prefill and hasattr(dlg, '_syl'):
+            dlg._syl.delete(0, 'end')
+            dlg._syl.insert(0, prefill)
+        self.wait_window(dlg)
+        if dlg.result:
+            blank.syllable    = dlg.result['syllable']
+            blank.beat_marker = dlg.result['beat_marker']
+            blank.lyric       = dlg.result['lyric']
+            blank.is_rest     = dlg.result['is_rest']
+            self.score.measures[mi].notes.append(blank)
+            notes_in_row = [n for n in self.score.measures[mi].notes if n.part_idx == pi]
+            self.selected = (mi, len(notes_in_row) - 1, pi)
+            self.redraw()
+            self._notify_score_change('add-note')
 
     def _edit_selected(self, prefill=''):
         if self.selected is None: return
         mi, ni, pi = self.selected
         if mi >= len(self.score.measures): return
+        if ni == -1:
+            self._insert_note_at(mi, pi, prefill)
+            return
         meas  = self.score.measures[mi]
         notes = [n for n in meas.notes if n.part_idx == pi]
-        if ni >= len(notes): return
+        if ni < 0 or ni >= len(notes): return
         note  = notes[ni]
         dlg   = NoteEditDialog(self, note, title='Edit Note')
         if prefill and hasattr(dlg, '_syl'):
@@ -752,6 +836,8 @@ class SolfaCanvas(tk.Canvas):
     def _delete_selected(self, event=None):
         if self.selected is None: return
         mi, ni, pi = self.selected
+        if ni == -1:
+            return  # empty cell selected — nothing to delete
         meas       = self.score.measures[mi]
         part_notes = [(i, n) for i, n in enumerate(meas.notes) if n.part_idx == pi]
         if ni < len(part_notes):
@@ -762,19 +848,11 @@ class SolfaCanvas(tk.Canvas):
 
     def add_note_to_selected_measure(self):
         if not self.score.measures: return
-        mi    = self.selected[0] if self.selected else len(self.score.measures) - 1
-        pi    = self.selected[2] if self.selected else 0
-        blank = CanvasSolfaNote('d', ':', False, '', pi)
-        dlg   = NoteEditDialog(self, blank, title='Add Note')
-        self.wait_window(dlg)
-        if dlg.result:
-            blank.syllable    = dlg.result['syllable']
-            blank.beat_marker = dlg.result['beat_marker']
-            blank.lyric       = dlg.result['lyric']
-            blank.is_rest     = dlg.result['is_rest']
-            self.score.measures[mi].notes.append(blank)
-            self.redraw()
-            self._notify_score_change('add-note')
+        if self.selected is not None:
+            mi, _ni, pi = self.selected
+        else:
+            mi, pi = len(self.score.measures) - 1, 0
+        self._insert_note_at(mi, pi, '')
 
     def add_measure(self):
         n = len(self.score.measures) + 1
@@ -1335,6 +1413,7 @@ class SolfaApp(tk.Tk):
         fm('File', [
             ('New Score',         self._new_score),
             ('Import MusicXML…',  self._import_xml),
+            ('Import MIDI…',      self._import_midi),
             None,
             ('Export to PDF…',    self._export_pdf),
             None,
@@ -1374,6 +1453,7 @@ class SolfaApp(tk.Tk):
 
         btns = [
             ('📂 Import XML',    self._import_xml),
+            ('🎵 Import MIDI',   self._import_midi),
             ('🖨  Export PDF',   self._export_pdf),
             ('✏  Edit Note',     self._edit_note),
             ('➕ Add Note',      self._add_note),
@@ -1592,8 +1672,22 @@ class SolfaApp(tk.Tk):
                 self._style_cb.set(self._score.solfa_style)
             self._update_live()
             self._status(f'Loaded: {os.path.basename(path)}  '
-                         f'| {len(self._score.measures)} measures '
-                         f'| {len(self._score.parts)} parts')
+                         f'| {len(self._score.measures)} measures ')
+        except Exception as exc:
+            messagebox.showerror('Import Error', str(exc))
+
+    def _import_midi(self):
+        path = filedialog.askopenfilename(
+            title='Import MIDI',
+            filetypes=[('MIDI files', '*.mid *.midi'), ('All', '*.*')])
+        if not path: return
+        try:
+            self._score = import_midi(path)
+            if hasattr(self, '_canvas'):
+                self._canvas.load_score(self._score)
+            self._update_live()
+            self._status(f'Loaded MIDI: {os.path.basename(path)}  '
+                         f'| {len(self._score.measures)} measures')
         except Exception as exc:
             messagebox.showerror('Import Error', str(exc))
 

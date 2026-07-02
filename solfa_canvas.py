@@ -13,6 +13,20 @@ import math
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict
 import copy
+import os
+
+# ── MIDI import ─────────────────────────────────────────────────────────────
+try:
+    import mido
+    MIDO_OK = True
+except ImportError:
+    MIDO_OK = False
+
+MIDI_NOTE_TO_PITCH = {
+    0: ('C', 0), 1: ('C', 1), 2: ('D', 0), 3: ('D', 1),
+    4: ('E', 0), 5: ('F', 0), 6: ('F', 1), 7: ('G', 0),
+    8: ('G', 1), 9: ('A', 0), 10: ('A', 1), 11: ('B', 0),
+}
 
 # ── PDF export ──────────────────────────────────────────────────────────────
 try:
@@ -61,6 +75,73 @@ def duration_to_beat_marker(d: float) -> str:
     if d >= 0.5:  return '.'
     if d >= 0.25: return ','
     return ':'
+
+
+def _midi_note_to_solfa(midi_note: int, key_semitone: int = 0) -> str:
+    step, alter = MIDI_NOTE_TO_PITCH[midi_note % 12]
+    octave = (midi_note // 12) - 1
+    return pitch_to_solfa(step, alter, octave, key_semitone)
+
+
+def import_midi(path: str) -> SolfaScore:
+    score = SolfaScore(title=os.path.splitext(os.path.basename(path))[0])
+    if not MIDO_OK:
+        messagebox.showwarning('MIDI Import',
+            'Install mido:\n\n  pip install mido\n\nThen restart.')
+        score.measures = [SolfaMeasure(number=i+1) for i in range(4)]
+        return score
+
+    try:
+        mid = mido.MidiFile(path)
+        tpb = mid.ticks_per_beat or 480
+        tempo = 500000
+        events = []
+
+        for track in mid.tracks:
+            abs_tick = 0
+            pending = {}
+            for msg in track:
+                abs_tick += msg.time
+                if msg.type == 'set_tempo':
+                    tempo = msg.tempo
+                elif msg.type == 'note_on' and getattr(msg, 'velocity', 0) > 0:
+                    pending[msg.note] = {'tick': abs_tick, 'channel': getattr(msg, 'channel', 0)}
+                elif msg.type in ('note_off',) or (msg.type == 'note_on' and getattr(msg, 'velocity', 0) == 0):
+                    if msg.note in pending:
+                        start = pending.pop(msg.note)
+                        dur_beats = (abs_tick - start['tick']) / tpb
+                        events.append({
+                            'midi_num': msg.note,
+                            'start_beat': start['tick'] / tpb,
+                            'duration': dur_beats,
+                            'channel': start['channel'],
+                        })
+
+        if not events:
+            score.measures = [SolfaMeasure(number=i+1) for i in range(4)]
+            return score
+
+        beats_per_measure = score.time_num * (4.0 / score.time_den)
+        max_beat = max(e['start_beat'] + e['duration'] for e in events)
+        n_measures = max(4, math.ceil(max_beat / beats_per_measure))
+        score.measures = [SolfaMeasure(number=i+1) for i in range(n_measures)]
+
+        for evt in sorted(events, key=lambda x: x['start_beat']):
+            mi = int(evt['start_beat'] / beats_per_measure)
+            if mi >= len(score.measures):
+                continue
+            syllable = _midi_note_to_solfa(evt['midi_num'], 0)
+            beat_marker = duration_to_beat_marker(evt['duration'])
+            part_idx = min(3, evt['channel'] if isinstance(evt['channel'], int) else 0)
+            score.measures[mi].notes.append(
+                SolfaNote(syllable=syllable, beat_marker=beat_marker, part_idx=part_idx)
+            )
+        return score
+
+    except Exception as exc:
+        messagebox.showerror('MIDI Import Error', str(exc))
+        score.measures = [SolfaMeasure(number=i+1) for i in range(4)]
+        return score
 
 
 def _beat_marker_to_beats(marker: str) -> float:
@@ -830,6 +911,7 @@ class SolfaApp(tk.Tk):
         mb.add_cascade(label='File', menu=file_m)
         file_m.add_command(label='New Score',          command=self._new_score)
         file_m.add_command(label='Import MusicXML…',   command=self._import_xml)
+        file_m.add_command(label='Import MIDI…',       command=self._import_midi)
         file_m.add_separator()
         file_m.add_command(label='Export to PDF…',     command=self._export_pdf)
         file_m.add_separator()
@@ -864,6 +946,7 @@ class SolfaApp(tk.Tk):
                        cursor='hand2')
 
         tk.Button(tb, text='📂 Import XML', command=self._import_xml, **btn_cfg).pack(side='left', padx=4, pady=6)
+        tk.Button(tb, text='🎵 Import MIDI', command=self._import_midi, **btn_cfg).pack(side='left', padx=4)
         tk.Button(tb, text='🖨 Export PDF',  command=self._export_pdf,  **btn_cfg).pack(side='left', padx=4)
         tk.Button(tb, text='✏ Edit Note',    command=self._edit_note,   **btn_cfg).pack(side='left', padx=4)
         tk.Button(tb, text='➕ Add Note',    command=self._add_note,    **btn_cfg).pack(side='left', padx=4)
@@ -986,6 +1069,17 @@ class SolfaApp(tk.Tk):
             self._status(f'Loaded: {path}  |  {len(self._score.measures)} measures')
         except Exception as exc:
             messagebox.showerror('Import Error', str(exc))
+
+    def _import_midi(self):
+        path = filedialog.askopenfilename(
+            title='Import MIDI',
+            filetypes=[('MIDI files', '*.mid *.midi'), ('All files', '*.*')])
+        if not path: return
+        self._score = import_midi(path)
+        if hasattr(self, '_canvas'):
+            self._canvas.load_score(self._score)
+        self._update_live()
+        self._status(f'Loaded MIDI: {path}  |  {len(self._score.measures)} measures')
 
     def _export_pdf(self):
         if not HAS_REPORTLAB:
